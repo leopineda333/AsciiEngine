@@ -1,15 +1,17 @@
 /**
  * @file Engine.cpp
- * @brief Integracion de Fase 2: SpatialHashGrid + Frustum 2D + AsciiZBuffer O(N) + DebugHUD (F3/F4).
+ * @brief Integracion de Fase 3: World Data-Driven (Flyweight), CollisionSolver y Z-Buffer O(N).
  */
 #include <AsciiEngine/Engine.hpp>
 #include <AsciiEngine/MathIso.hpp>
 #include <AsciiEngine/MaterialSystem.hpp>
 #include <AsciiEngine/AsciiZBuffer.hpp>
 #include <AsciiEngine/CullingSystem.hpp>
+#include <AsciiEngine/World.hpp>
 #include <AsciiEngine/DebugHUD.hpp>
 #include "raylib.h"
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cmath>
@@ -19,27 +21,10 @@
 namespace AsciiEngine {
 
     namespace {
-
-        // Punto precalculado (Preview del Point-Cloud Baking Flyweight que expandiremos en Fase 3).
-        struct BakedUnitAtom {
-            Vec3  localPos;
-            Vec3  localNormal;
-            float ao = 1.0f;
-        };
-
-        // Instancia ligera en el mapa (solo 24 bytes: comparte el nube de puntos horneada).
-        struct StressTestInstance {
-            Vec3       worldPos;
-            float      scale = 1.0f;
-            MaterialId materialId = FALLBACK_MATERIAL_ID;
-            uint8_t    cloudIndex = 0; // Indice en el arreglo de nubes horneadas.
-        };
-
         using Clock = std::chrono::steady_clock;
         float ElapsedMs(Clock::time_point start, Clock::time_point end) {
             return std::chrono::duration<float, std::milli>(end - start).count();
         }
-
     } // namespace anonimo
 
     struct Context::Impl {
@@ -53,51 +38,59 @@ namespace AsciiEngine {
         float glyphAspectRatio = 0.58f;
         std::array<Rectangle, 128> glyphLUT = {};
 
-        // Subsistemas principales de Fase 1 y Fase 2.
+        // Rutas activas para soportar Hot-Reloading (F5).
         std::string dataRootPath = "assets/data";
-        MaterialSystem  materialSystem;
+        std::string activeMapPath;
+
+        // Subsistemas del motor.
+        MaterialSystem     materialSystem;
         MathIso::IsoConfig isoConfig;
-        AsciiZBuffer    zBuffer;
-        SpatialHashGrid spatialGrid{ 24.0f };
-        DebugHUD        debugHUD;
+        AsciiZBuffer       zBuffer;
+        SpatialHashGrid    spatialGrid{ 24.0f };
+        World              world;
+        DebugHUD           debugHUD;
 
-        // Camara 2D isometrica y parametros de Culling.
+        // Jugador fisico de prueba (en Fase 6 pasara al CharacterSystem modular).
+        SimpleActor player;
+        MaterialId  playerBodyMat = FALLBACK_MATERIAL_ID;
+        MaterialId  playerHeadMat = FALLBACK_MATERIAL_ID;
+
+        // Camara 2D isometrica y configuracion del Z-Buffer.
+        // Rejilla Z-Buffer calibrada (7x12 px: caracteres legibles y estilizados) y rango de zoom artistico.
         Camera2D camera = {};
-        float viewPaddingPx = 96.0f; // Margen extra para no cortar objetos altos en los bordes.
-        float cellWidthPx = 6.0f;
-        float cellHeightPx = 10.0f;
+        float viewPaddingPx = 140.0f;
+        float cellWidthPx = 7.0f;
+        float cellHeightPx = 12.0f;
+        float minZoom = 0.75f;
+        float maxZoom = 1.45f;
 
-        // Iluminacion de prueba y controles interactivos.
-        float lightAngleRad = 0.8f;
-        float lightElevation = 0.68f;
+        // Iluminacion de prueba y estilo de contornos.
+        float lightAngleRad = 0.85f;
+        float lightElevation = 0.72f;
         float lightIntensity = 1.05f;
-        bool  autoOrbitLight = true;
-        bool  enableOutlines = true;
+        bool  autoOrbitLight = false;
+        ZBufferStyle zBufferStyle; // Contiene enableOutlines, enableAsciiBorder, pixelOutlinePx = 1.5f, etc.
 
-        // Datos del Stress Test de Fase 2 (2,025 objetos compartiendo 5 nubes horneadas).
-        std::vector<std::vector<BakedUnitAtom>> bakedClouds;
-        std::vector<StressTestInstance>         instances;
-
-        // Buffers pre-alojados reutilizados cada frame (CERO asignaciones en el bucle principal).
+        // Buffers pre-alojados para consultas de render y fisica (cero asignaciones por frame).
         std::vector<uint32_t>   visibleInstanceIds;
         std::vector<ChunkCoord> activeChunks;
+        std::vector<uint32_t>   physicsQueryIds;
+        std::vector<ChunkCoord> physicsQueryChunks;
 
-        // Telemetria actualizada frame a frame.
         FrameTelemetry telemetry;
-        size_t cachedBakedCloudBytes = 0;
 
         void LoadTypography() {
             const char* candidates[] = {
-                "assets/fonts/SourceCodePro-Bold.ttf",
-                "C:/Windows/Fonts/consolab.ttf",
                 "C:/Windows/Fonts/consola.ttf"
             };
 
             customFontLoaded = false;
             for (const char* path : candidates) {
                 if (FileExists(path)) {
-                    renderFont = LoadFontEx(path, 36, nullptr, 95);
-                    SetTextureFilter(renderFont.texture, TEXTURE_FILTER_BILINEAR);
+                    // 24px + mipmaps trilineales: trazos suaves y limpios sin borroneo ni pixel-art duro.
+                    renderFont = LoadFontEx(path, 24, nullptr, 95);
+                    GenTextureMipmaps(&renderFont.texture);
+                    SetTextureFilter(renderFont.texture, TEXTURE_FILTER_TRILINEAR);
                     customFontLoaded = true;
                     break;
                 }
@@ -112,103 +105,6 @@ namespace AsciiEngine {
             }
         }
 
-        // Hornea una nube de puntos unitaria (radio 2.0) respetando REGULAR vs NOISY del material.
-        std::vector<BakedUnitAtom> BakeTestSphereCloud(MaterialId matId, float seed) const {
-            std::vector<BakedUnitAtom> cloud;
-            const Material& mat = materialSystem.Get(matId);
-            const float radius = 2.0f;
-            const Vec3 radii = { radius, radius, radius };
-            const float step = 0.34f;
-
-            for (float z = -radius; z <= radius; z += step) {
-                for (float y = -radius; y <= radius; y += step) {
-                    for (float x = -radius; x <= radius; x += step) {
-                        Vec3 p = { x, y, z };
-
-                        if (mat.gridMode == GridMode::NOISY) {
-                            if (MathIso::Hash3D(x, y, z, seed + 11.7f) > mat.density) {
-                                continue;
-                            }
-                            float jAmp = mat.jitter * step * 2.0f;
-                            p.x += (MathIso::Hash3D(x, y, z, seed + 1.3f) - 0.5f) * jAmp;
-                            p.y += (MathIso::Hash3D(x, y, z, seed + 2.7f) - 0.5f) * jAmp;
-                            p.z += (MathIso::Hash3D(x, y, z, seed + 5.1f) - 0.5f) * jAmp;
-                        }
-
-                        float metric = MathIso::EllipsoidMetric(p, radii);
-                        if (metric > 1.0f || metric < 0.62f) {
-                            continue; // Solo conservamos la cascara superficial.
-                        }
-
-                        Vec3 normal = MathIso::EllipsoidNormal(p, radii);
-                        float ao = MathIso::Clamp(0.45f + 0.55f * normal.z, 0.25f, 1.0f);
-                        cloud.push_back({ p, normal, ao });
-                    }
-                }
-            }
-            return cloud;
-        }
-
-        // Construye el escenario Stress Test con 2,025 objetos registrados en el SpatialHashGrid.
-        void BuildPhase2StressTestScene() {
-            const std::array<MaterialId, 5> palette = {
-                materialSystem.GetId("metal_iron"),
-                materialSystem.GetId("wood_bark"),
-                materialSystem.GetId("foliage_pine"),
-                materialSystem.GetId("stone_granite"),
-                materialSystem.GetId("snow_fresh")
-            };
-
-            // 1. Horneamos solo 5 plantillas en memoria (Patron Flyweight).
-            bakedClouds.clear();
-            cachedBakedCloudBytes = 0;
-            for (size_t i = 0; i < palette.size(); ++i) {
-                bakedClouds.push_back(BakeTestSphereCloud(palette[i], static_cast<float>(i) * 3.7f));
-                cachedBakedCloudBytes += bakedClouds.back().capacity() * sizeof(BakedUnitAtom);
-            }
-
-            // 2. Generamos 45 x 45 = 2,025 instancias distribuidas en [-140, +140].
-            constexpr int gridSide = 45;
-            const float spacing = 6.4f;
-            const float halfExtent = (gridSide - 1) * spacing * 0.5f;
-
-            instances.clear();
-            instances.reserve(gridSide * gridSide);
-            spatialGrid.Reset(24.0f, gridSide * gridSide);
-
-            for (int gy = 0; gy < gridSide; ++gy) {
-                for (int gx = 0; gx < gridSide; ++gx) {
-                    float baseX = static_cast<float>(gx) * spacing - halfExtent;
-                    float baseY = static_cast<float>(gy) * spacing - halfExtent;
-
-                    // Desplazamiento organico determinista para romper la alineacion rigida.
-                    float jx = (MathIso::Hash3D(baseX, baseY, 1.0f, 4.2f) - 0.5f) * 2.2f;
-                    float jy = (MathIso::Hash3D(baseX, baseY, 2.0f, 9.1f) - 0.5f) * 2.2f;
-                    float scale = 0.75f + MathIso::Hash3D(baseX, baseY, 3.0f, 1.8f) * 0.55f;
-
-                    uint8_t variant = static_cast<uint8_t>((gx * 7 + gy * 13) % palette.size());
-                    uint32_t id = static_cast<uint32_t>(instances.size());
-
-                    StressTestInstance inst;
-                    inst.worldPos = { baseX + jx, baseY + jy, 1.6f * scale };
-                    inst.scale = scale;
-                    inst.materialId = palette[variant];
-                    inst.cloudIndex = variant;
-
-                    instances.push_back(inst);
-                    spatialGrid.InsertInstance(id, inst.worldPos.x, inst.worldPos.y, 2.2f * scale);
-                }
-            }
-
-            // Pre-reservamos los vectores de consulta para cero asignaciones durante el bucle.
-            visibleInstanceIds.reserve(instances.size());
-            activeChunks.reserve(spatialGrid.GetTotalChunks());
-
-            TraceLog(LOG_INFO, "PHASE 2 STRESS TEST: %zu instancias horneadas en %u chunks.",
-                instances.size(), spatialGrid.GetTotalChunks());
-        }
-
-        // Convierte un punto isometrico del mundo a coordenadas reales de pantalla segun Camera2D.
         Vec2 IsoToScreen(Vec2 isoPt) const {
             return {
                 (isoPt.x - camera.target.x) * camera.zoom + camera.offset.x,
@@ -231,8 +127,8 @@ namespace AsciiEngine {
             const std::array<Vec2, 4> corners = { {
                 { -pad, -pad },
                 { static_cast<float>(screenWidth) + pad, -pad },
-                { -pad, static_cast<float>(screenHeight) + pad * 1.5f }, // Margen inferior extra por altura Z.
-                { static_cast<float>(screenWidth) + pad, static_cast<float>(screenHeight) + pad * 1.5f }
+                { -pad, static_cast<float>(screenHeight) + pad * 2.0f },
+                { static_cast<float>(screenWidth) + pad, static_cast<float>(screenHeight) + pad * 2.0f }
             } };
 
             float minWX = 1e9f, maxWX = -1e9f;
@@ -255,34 +151,153 @@ namespace AsciiEngine {
             };
         }
 
-        // Dibuja los overlays de depuracion visual (F4): diamantes de chunks activos + caja de frustum.
+        // Envia una capsula sencilla del jugador al Z-Buffer para validar oclusion real detras de objetos.
+        void SubmitPlayerAvatarToZBuffer(Vec3 lightDir, int splatRadius, uint32_t& atomsEvaluated, uint32_t& atomsCulled) {
+            const float step = 0.22f;
+            const float bodyR = 0.55f;
+            const float bodyH = 1.85f;
+            const float zoom = camera.zoom;
+
+            // 1. Torso cilindrico (material metal_iron).
+            for (float z = 0.0f; z <= bodyH; z += step) {
+                for (float y = -bodyR; y <= bodyR; y += step) {
+                    for (float x = -bodyR; x <= bodyR; x += step) {
+                        float rSq = x * x + y * y;
+                        if (rSq > bodyR * bodyR || (z < bodyH - step && rSq < 0.08f)) continue;
+                        ++atomsEvaluated;
+
+                        Vec3 worldPt = { player.position.x + x, player.position.y + y, z };
+                        Vec3 norm = MathIso::Normalize({ x, y, 0.25f });
+
+                        float diff = std::max(0.0f, MathIso::Dot(norm, lightDir)) * lightIntensity;
+                        float luma = MathIso::Clamp(diff + 0.28f, 0.0f, 1.0f);
+
+                        Vec2 isoPt = MathIso::WorldToIso(worldPt, isoConfig);
+                        if (!zBuffer.SubmitAtom(isoPt.x * zoom, isoPt.y * zoom, MathIso::ComputeDepthKey(worldPt),
+                            materialSystem.SampleGlyph(playerBodyMat, luma),
+                            materialSystem.SampleColor(playerBodyMat, luma),
+                            playerBodyMat, true, splatRadius)) {
+                            ++atomsCulled;
+                        }
+                    }
+                }
+            }
+
+            // 2. Cabeza esferica brillante (material snow_fresh) para destacar entre los pinos.
+            const float headR = 0.48f;
+            const float headZ = bodyH + 0.45f;
+            for (float z = -headR; z <= headR; z += step) {
+                for (float y = -headR; y <= headR; y += step) {
+                    for (float x = -headR; x <= headR; x += step) {
+                        if ((x * x + y * y + z * z) > headR * headR) continue;
+                        ++atomsEvaluated;
+
+                        Vec3 worldPt = { player.position.x + x, player.position.y + y, headZ + z };
+                        Vec3 norm = MathIso::Normalize({ x, y, z });
+
+                        float diff = std::max(0.0f, MathIso::Dot(norm, lightDir)) * lightIntensity;
+                        float luma = MathIso::Clamp(diff + 0.35f, 0.0f, 1.0f);
+
+                        Vec2 isoPt = MathIso::WorldToIso(worldPt, isoConfig);
+                        if (!zBuffer.SubmitAtom(isoPt.x * zoom, isoPt.y * zoom, MathIso::ComputeDepthKey(worldPt),
+                            materialSystem.SampleGlyph(playerHeadMat, luma),
+                            materialSystem.SampleColor(playerHeadMat, luma),
+                            playerHeadMat, true, splatRadius)) {
+                            ++atomsCulled;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Dibuja un circulo plano en el suelo isometrico (Z = 0) para depuracion visual F4.
+        void DrawIsoCircle(Vec2 centerWorld, float radius, Color col) const {
+            constexpr int segments = 18;
+            constexpr float stepRad = 6.2831853f / static_cast<float>(segments);
+
+            Vec2 prev = IsoToScreen(MathIso::WorldToIso({ centerWorld.x + radius, centerWorld.y, 0.0f }, isoConfig));
+            for (int i = 1; i <= segments; ++i) {
+                float a = static_cast<float>(i) * stepRad;
+                Vec2 curr = IsoToScreen(MathIso::WorldToIso(
+                    { centerWorld.x + std::cos(a) * radius, centerWorld.y + std::sin(a) * radius, 0.0f },
+                    isoConfig));
+                DrawLineV({ prev.x, prev.y }, { curr.x, curr.y }, col);
+                prev = curr;
+            }
+        }
+
+        // Dibuja un rectangulo OBB rotado en el suelo isometrico (Z = 0) para depuracion F4.
+        void DrawIsoOBB(Vec2 center, Vec2 halfSize, float cosRot, float sinRot, Color col) const {
+            const std::array<Vec2, 4> localCorners = { {
+                { -halfSize.x, -halfSize.y },
+                { halfSize.x, -halfSize.y },
+                { halfSize.x,  halfSize.y },
+                { -halfSize.x,  halfSize.y }
+            } };
+
+            std::array<Vec2, 4> screenCorners;
+            for (size_t i = 0; i < 4; ++i) {
+                float wx = center.x + (localCorners[i].x * cosRot - localCorners[i].y * sinRot);
+                float wy = center.y + (localCorners[i].x * sinRot + localCorners[i].y * cosRot);
+                screenCorners[i] = IsoToScreen(MathIso::WorldToIso({ wx, wy, 0.0f }, isoConfig));
+            }
+
+            for (size_t i = 0; i < 4; ++i) {
+                const Vec2& a = screenCorners[i];
+                const Vec2& b = screenCorners[(i + 1) % 4];
+                DrawLineV({ a.x, a.y }, { b.x, b.y }, col);
+            }
+        }
+
+        // Overlays visuales (F4): Chunks activos en cian + Volumenes de colision en verde + Jugador en amarillo.
         void RenderDebugOverlays() const {
             if (!debugHUD.AreOverlaysVisible()) {
                 return;
             }
 
+            // 1. Chunks activos del SpatialHashGrid (cian).
             const float cs = spatialGrid.GetChunkSize();
             for (const ChunkCoord& cc : activeChunks) {
                 float x0 = static_cast<float>(cc.cx) * cs;
                 float y0 = static_cast<float>(cc.cy) * cs;
-                float x1 = x0 + cs;
-                float y1 = y0 + cs;
-
-                Vec2 p0 = IsoToScreen(MathIso::WorldToIso({ x0, y0, 0.0f }, isoConfig));
-                Vec2 p1 = IsoToScreen(MathIso::WorldToIso({ x1, y0, 0.0f }, isoConfig));
-                Vec2 p2 = IsoToScreen(MathIso::WorldToIso({ x1, y1, 0.0f }, isoConfig));
-                Vec2 p3 = IsoToScreen(MathIso::WorldToIso({ x0, y1, 0.0f }, isoConfig));
-
-                Color chunkCol = { 0, 220, 240, 120 };
-                DrawLineV({ p0.x, p0.y }, { p1.x, p1.y }, chunkCol);
-                DrawLineV({ p1.x, p1.y }, { p2.x, p2.y }, chunkCol);
-                DrawLineV({ p2.x, p2.y }, { p3.x, p3.y }, chunkCol);
-                DrawLineV({ p3.x, p3.y }, { p0.x, p0.y }, chunkCol);
+                DrawIsoOBB({ x0 + cs * 0.5f, y0 + cs * 0.5f }, { cs * 0.5f, cs * 0.5f }, 1.0f, 0.0f, { 0, 220, 240, 110 });
             }
 
-            // Borde interno de referencia para visualizar el frustum activo.
-            DrawRectangleLinesEx({ 4.0f, 4.0f, static_cast<float>(screenWidth - 8), static_cast<float>(screenHeight - 8) },
-                2.0f, { 255, 220, 0, 140 });
+            // 2. Volumenes de colision de instancias visibles (verde).
+            const auto& instances = world.GetInstances();
+            const Color colGreen = { 60, 245, 110, 200 };
+            for (uint32_t id : visibleInstanceIds) {
+                const MapInstance& inst = instances[id];
+                const BakedPrefab* prefab = world.GetPrefab(inst.prefabId);
+                if (!prefab || prefab->collider.type == ColliderType::NONE) continue;
+
+                const ColliderDef& col = prefab->collider;
+                const Vec2 center2D = { inst.position.x, inst.position.y };
+
+                if (col.type == ColliderType::CIRCLE) {
+                    float scaleAvg = (inst.scale.x + inst.scale.y) * 0.5f;
+                    DrawIsoCircle(center2D, col.radius * scaleAvg, colGreen);
+                }
+                else if (col.type == ColliderType::BOX) {
+                    DrawIsoOBB(center2D, { col.halfSize.x * inst.scale.x, col.halfSize.y * inst.scale.y },
+                        inst.cosRot, inst.sinRot, colGreen);
+                }
+                else if (col.type == ColliderType::ARCH_PILLARS) {
+                    float totalW = (col.halfSize.x * 2.0f) * inst.scale.x;
+                    float openW = col.openingWidth * inst.scale.x;
+                    float pillarW = std::max(0.2f, (totalW - openW) * 0.5f);
+                    float offsetDist = (openW * 0.5f) + (pillarW * 0.5f);
+                    Vec2  pillarHalf = { pillarW * 0.5f, col.halfSize.y * inst.scale.y };
+
+                    DrawIsoOBB({ center2D.x - inst.cosRot * offsetDist, center2D.y - inst.sinRot * offsetDist },
+                        pillarHalf, inst.cosRot, inst.sinRot, colGreen);
+                    DrawIsoOBB({ center2D.x + inst.cosRot * offsetDist, center2D.y + inst.sinRot * offsetDist },
+                        pillarHalf, inst.cosRot, inst.sinRot, colGreen);
+                }
+            }
+
+            // 3. Circulo de colision del jugador (amarillo).
+            DrawIsoCircle(player.position, player.collisionRadius, GOLD);
         }
     };
 
@@ -304,17 +319,43 @@ namespace AsciiEngine {
 
             m_impl->camera.offset = { width * 0.5f, height * 0.5f };
             m_impl->camera.target = { 0.0f, 0.0f };
-            m_impl->camera.zoom = 1.0f;
+            m_impl->camera.zoom = 1.05f;
         }
         return m_impl->initialized;
     }
 
     bool Context::LoadRegistry(const std::string& dataRoot) {
         m_impl->dataRootPath = dataRoot;
-        std::filesystem::path matPath = std::filesystem::path(dataRoot) / "materials" / "materials.json";
 
-        bool ok = m_impl->materialSystem.LoadFromFile(matPath.string());
-        m_impl->BuildPhase2StressTestScene();
+        std::filesystem::path matPath = std::filesystem::path(dataRoot) / "materials" / "materials.json";
+        std::filesystem::path objDir = std::filesystem::path(dataRoot) / "objects";
+
+        bool matOk = m_impl->materialSystem.LoadFromFile(matPath.string());
+        bool objOk = m_impl->world.LoadObjectsDirectory(objDir.string(), m_impl->materialSystem);
+
+        m_impl->playerBodyMat = m_impl->materialSystem.GetId("metal_iron");
+        m_impl->playerHeadMat = m_impl->materialSystem.GetId("snow_fresh");
+        return matOk && objOk;
+    }
+
+    bool Context::LoadMap(const std::string& mapPath) {
+        m_impl->activeMapPath = mapPath;
+        bool ok = m_impl->world.LoadMapFromFile(mapPath, m_impl->spatialGrid);
+
+        if (ok) {
+            // Ubicamos al jugador y a la camara en el spawn definido por el mapa JSON.
+            m_impl->player.position = m_impl->world.GetPlayerSpawn();
+            m_impl->player.velocity = { 0.0f, 0.0f };
+
+            Vec2 spawnIso = MathIso::WorldToIso({ m_impl->player.position.x, m_impl->player.position.y, 1.0f }, m_impl->isoConfig);
+            m_impl->camera.target = { spawnIso.x, spawnIso.y };
+
+            // Pre-reservamos los buffers de consulta para cero asignaciones en el bucle principal.
+            m_impl->visibleInstanceIds.reserve(m_impl->world.GetInstances().size());
+            m_impl->activeChunks.reserve(m_impl->spatialGrid.GetTotalChunks());
+            m_impl->physicsQueryIds.reserve(128);
+            m_impl->physicsQueryChunks.reserve(16);
+        }
         return ok;
     }
 
@@ -335,28 +376,60 @@ namespace AsciiEngine {
         m_impl->camera.offset = { m_impl->screenWidth * 0.5f, m_impl->screenHeight * 0.5f };
         m_impl->zBuffer.Resize(m_impl->screenWidth, m_impl->screenHeight, m_impl->cellWidthPx, m_impl->cellHeightPx);
 
-        // Movimiento de camara isometrica con WASD (ajustado al zoom actual).
-        const float panSpeed = 480.0f / m_impl->camera.zoom;
-        if (IsKeyDown(KEY_W)) m_impl->camera.target.y -= panSpeed * dt;
-        if (IsKeyDown(KEY_S)) m_impl->camera.target.y += panSpeed * dt;
-        if (IsKeyDown(KEY_A)) m_impl->camera.target.x -= panSpeed * dt;
-        if (IsKeyDown(KEY_D)) m_impl->camera.target.x += panSpeed * dt;
+        // 1. Entrada WASD traducida de pantalla a direcciones cartesianas del mundo isometrico.
+        Vec2 screenInput = { 0.0f, 0.0f };
+        if (IsKeyDown(KEY_W)) screenInput.y -= 1.0f;
+        if (IsKeyDown(KEY_S)) screenInput.y += 1.0f;
+        if (IsKeyDown(KEY_A)) screenInput.x -= 1.0f;
+        if (IsKeyDown(KEY_D)) screenInput.x += 1.0f;
+
+        Vec2 desiredWorldDir = MathIso::IsoToWorldGround(screenInput, m_impl->isoConfig);
+        m_impl->player.moveSpeed = IsKeyDown(KEY_LEFT_SHIFT) ? 24.0f : 14.0f;
+
+        // 2. Fisica semi-implicita y resolucion de colisiones (Circulo, OBB, Arcos).
+        CollisionSolver::UpdateActorPhysics(
+            m_impl->player,
+            desiredWorldDir,
+            dt,
+            m_impl->world,
+            m_impl->spatialGrid,
+            m_impl->physicsQueryIds,
+            m_impl->physicsQueryChunks
+        );
+
+        // 3. Seguimiento suave de camara al jugador + Zoom con rueda.
+        Vec2 targetIso = MathIso::WorldToIso({ m_impl->player.position.x, m_impl->player.position.y, 1.2f }, m_impl->isoConfig);
+        float camSmooth = MathIso::Clamp(9.0f * dt, 0.0f, 1.0f);
+        m_impl->camera.target.x = MathIso::Lerp(m_impl->camera.target.x, targetIso.x, camSmooth);
+        m_impl->camera.target.y = MathIso::Lerp(m_impl->camera.target.y, targetIso.y, camSmooth);
 
         // Zoom suave con rueda del raton.
         float wheel = GetMouseWheelMove();
         if (wheel != 0.0f) {
-            m_impl->camera.zoom = MathIso::Clamp(m_impl->camera.zoom + wheel * 0.12f, 0.45f, 2.5f);
+            m_impl->camera.zoom = MathIso::Clamp(
+                m_impl->camera.zoom + wheel * 0.08f,
+                m_impl->minZoom,
+                m_impl->maxZoom
+            );
         }
 
-        // Controles de prueba: orbita solar, outlines, Debug HUD (F3), Overlays (F4) y Hot-Reload (F5).
+        // 4. Controles de diagnostico y Hot-Reloading (F5 recarga materiales, objetos y mapa).
         if (IsKeyPressed(KEY_SPACE)) m_impl->autoOrbitLight = !m_impl->autoOrbitLight;
-        if (m_impl->autoOrbitLight)  m_impl->lightAngleRad += dt * 0.7f;
+        if (m_impl->autoOrbitLight)  m_impl->lightAngleRad += dt * 0.55f;
         if (IsKeyDown(KEY_LEFT)) { m_impl->autoOrbitLight = false; m_impl->lightAngleRad -= dt * 2.0f; }
         if (IsKeyDown(KEY_RIGHT)) { m_impl->autoOrbitLight = false; m_impl->lightAngleRad += dt * 2.0f; }
-        if (IsKeyPressed(KEY_O))     m_impl->enableOutlines = !m_impl->enableOutlines;
-        if (IsKeyPressed(KEY_F3))    m_impl->debugHUD.ToggleTelemetry();
-        if (IsKeyPressed(KEY_F4))    m_impl->debugHUD.ToggleOverlays();
-        if (IsKeyPressed(KEY_F5))    LoadRegistry(m_impl->dataRootPath);
+        if (IsKeyPressed(KEY_O))  m_impl->zBufferStyle.enableOutlines = !m_impl->zBufferStyle.enableOutlines;
+        if (IsKeyPressed(KEY_B))  m_impl->zBufferStyle.enableAsciiBorder = !m_impl->zBufferStyle.enableAsciiBorder;
+        if (IsKeyPressed(KEY_F3)) m_impl->debugHUD.ToggleTelemetry();
+        if (IsKeyPressed(KEY_F4)) m_impl->debugHUD.ToggleOverlays();
+        if (IsKeyPressed(KEY_F5)) {
+            Vec2 savedPlayerPos = m_impl->player.position;
+            LoadRegistry(m_impl->dataRootPath);
+            if (!m_impl->activeMapPath.empty()) {
+                LoadMap(m_impl->activeMapPath);
+                m_impl->player.position = savedPlayerPos; // Conservamos posicion al recargar en vivo.
+            }
+        }
 
         auto simEnd = Clock::now();
 
@@ -364,12 +437,9 @@ namespace AsciiEngine {
         m_impl->telemetry.simTimeMs = ElapsedMs(simStart, simEnd);
         m_impl->telemetry.fps = static_cast<float>(GetFPS());
         m_impl->telemetry.frameTimeMs = dt * 1000.0f;
-        m_impl->telemetry.cameraWorldPos = MathIso::IsoToWorldGround(
-            { m_impl->camera.target.x, m_impl->camera.target.y },
-            m_impl->isoConfig
-        );
+        m_impl->telemetry.cameraWorldPos = m_impl->player.position;
         m_impl->telemetry.cameraZoom = m_impl->camera.zoom;
-        m_impl->telemetry.outlinesActive = m_impl->enableOutlines;
+        m_impl->telemetry.outlinesActive = m_impl->zBufferStyle.enableOutlines;
         m_impl->debugHUD.UpdateMetrics(m_impl->telemetry, dt);
     }
 
@@ -385,11 +455,15 @@ namespace AsciiEngine {
         auto cullEnd = Clock::now();
 
         // =========================================================================
-        // ETAPA 6: CULLING CAPA 2 (Frustum 2D) + ILUMINACION + Z-BUFFER O(N) (CAPA 3)
+        // ETAPA 6: FRUSTUM 2D (CAPA 2) + ILUMINACION + ASCII Z-BUFFER O(N) (CAPA 3)
         // =========================================================================
         auto zbufStart = Clock::now();
 
-        m_impl->zBuffer.Clear();
+        const float zoom = m_impl->camera.zoom;
+        const float camTopLeftX = m_impl->camera.target.x * zoom - m_impl->camera.offset.x;
+        const float camTopLeftY = m_impl->camera.target.y * zoom - m_impl->camera.offset.y;
+
+        m_impl->zBuffer.BeginFrame(camTopLeftX, camTopLeftY);
 
         const Rect2D viewportRect = {
             -m_impl->viewPaddingPx,
@@ -404,64 +478,99 @@ namespace AsciiEngine {
             m_impl->lightElevation
             });
 
+        const int splatRadius = (zoom > 1.15f) ? 1 : 0;
+
         uint32_t instancesRendered = 0;
         uint32_t atomsEvaluated = 0;
         uint32_t atomsCulledScreen = 0;
 
+        // 1. Insertamos al jugador en el Z-Buffer.
+        m_impl->SubmitPlayerAvatarToZBuffer(lightDir, splatRadius, atomsEvaluated, atomsCulledScreen);
+
+        // 2. Insertamos las instancias visibles del mundo (compartiendo prefabs Flyweight).
+        const auto& instances = m_impl->world.GetInstances();
+        const float screenW = static_cast<float>(m_impl->screenWidth);
+        const float screenH = static_cast<float>(m_impl->screenHeight);
+
         for (uint32_t instId : m_impl->visibleInstanceIds) {
-            const StressTestInstance& inst = m_impl->instances[instId];
+            const MapInstance& inst = instances[instId];
+            const BakedPrefab* prefab = m_impl->world.GetPrefab(inst.prefabId);
+            if (!prefab) continue;
+
+            // Capa 2 — Frustum Culling 2D usando radio y altura horneados del prefab.
+            Vec2 baseScreen = m_impl->IsoToScreen(MathIso::WorldToIso(inst.position, m_impl->isoConfig));
+            float maxScaleXY = std::max(inst.scale.x, inst.scale.y);
+            float screenRadX = prefab->boundRadiusXY * maxScaleXY * m_impl->isoConfig.tileWidthHalf * zoom;
+            float screenHgt = (prefab->boundHeightZ * inst.scale.z * m_impl->isoConfig.scaleZ
+                + prefab->boundRadiusXY * maxScaleXY * m_impl->isoConfig.tileHeightHalf) * zoom;
 
             // Capa 2 — Frustum Culling 2D: proyectamos el centro y comprobamos su AABB de pantalla.
-            Vec2 centerScreen = m_impl->IsoToScreen(MathIso::WorldToIso(inst.worldPos, m_impl->isoConfig));
-            float screenRadius = 2.4f * inst.scale * m_impl->isoConfig.tileWidthHalf * m_impl->camera.zoom;
             Rect2D objRect = {
-                centerScreen.x - screenRadius,
-                centerScreen.y - screenRadius,
-                screenRadius * 2.0f,
-                screenRadius * 2.0f
+                baseScreen.x - screenRadX,
+                baseScreen.y - screenHgt,
+                screenRadX * 2.0f,
+                screenHgt + screenRadX * 0.6f
             };
-
             if (!viewportRect.Intersects(objRect)) {
                 continue; // Descartado en bloque antes de tocar su nube de puntos.
             }
 
             ++instancesRendered;
 
-            const Material& mat = m_impl->materialSystem.Get(inst.materialId);
-            const auto& cloud = m_impl->bakedClouds[inst.cloudIndex];
-            const BakedUnitAtom* atoms = cloud.data();
-            const size_t atomCount = cloud.size();
+            const BakedAtom* atoms = prefab->atoms.data();
+            const size_t atomCount = prefab->atoms.size();
 
             for (size_t i = 0; i < atomCount; ++i) {
-                const BakedUnitAtom& a = atoms[i];
+                const BakedAtom& a = atoms[i];
                 ++atomsEvaluated;
 
+                // Escala local + rotacion Z usando cos/sin precalculados en MapInstance.
+                float sx = a.localPos.x * inst.scale.x;
+                float sy = a.localPos.y * inst.scale.y;
+                float sz = a.localPos.z * inst.scale.z;
+
                 Vec3 worldPt = {
-                    inst.worldPos.x + a.localPos.x * inst.scale,
-                    inst.worldPos.y + a.localPos.y * inst.scale,
-                    inst.worldPos.z + a.localPos.z * inst.scale
+                    inst.position.x + (sx * inst.cosRot - sy * inst.sinRot),
+                    inst.position.y + (sx * inst.sinRot + sy * inst.cosRot),
+                    inst.position.z + sz
                 };
 
-                // Proyeccion 3D -> Isometrico -> Pantalla.
-                Vec2 screenPt = m_impl->IsoToScreen(MathIso::WorldToIso(worldPt, m_impl->isoConfig));
+                // Proyeccion 3D -> Isometrico con zoom (invariante al desplazamiento de camara).
+                Vec2 isoPt = MathIso::WorldToIso(worldPt, m_impl->isoConfig);
+                float zoomedX = isoPt.x * zoom;
+                float zoomedY = isoPt.y * zoom;
 
-                // Pre-check rapido de Capa 3 antes de calcular iluminacion y color.
-                if (screenPt.x < 0.0f || screenPt.x >= static_cast<float>(m_impl->screenWidth) ||
-                    screenPt.y < 0.0f || screenPt.y >= static_cast<float>(m_impl->screenHeight)) {
+                // Pre-check rapido de Capa 3 (dejando 1 celda de margen para no cortar outlines en bordes).
+                float screenX = zoomedX - camTopLeftX;
+                float screenY = zoomedY - camTopLeftY;
+                if (screenX < -m_impl->cellWidthPx || screenX >= screenW + m_impl->cellWidthPx ||
+                    screenY < -m_impl->cellHeightPx || screenY >= screenH + m_impl->cellHeightPx) {
                     ++atomsCulledScreen;
                     continue;
                 }
 
-                // Iluminacion Lambertiana + oclusion ambiental precalculada.
-                float diffuse = std::max(0.0f, MathIso::Dot(a.localNormal, lightDir)) * m_impl->lightIntensity;
+                // Rotamos la normal al espacio del mundo para que la luz responda a rotDeg.
+                Vec3 worldNorm = {
+                    a.localNormal.x * inst.cosRot - a.localNormal.y * inst.sinRot,
+                    a.localNormal.x * inst.sinRot + a.localNormal.y * inst.cosRot,
+                    a.localNormal.z
+                };
+
+                MaterialId matId = (inst.overrideMaterialId != FALLBACK_MATERIAL_ID)
+                    ? inst.overrideMaterialId
+                    : a.materialId;
+                const Material& mat = m_impl->materialSystem.Get(matId);
+
+                float diffuse = std::max(0.0f, MathIso::Dot(worldNorm, lightDir)) * m_impl->lightIntensity;
                 float luma = MathIso::Clamp((diffuse + 0.14f) * a.ao, 0.0f, 1.0f);
 
-                char glyph = m_impl->materialSystem.SampleGlyph(inst.materialId, luma);
-                ColorRGBA col = m_impl->materialSystem.SampleColor(inst.materialId, luma);
+                char glyph = (a.structuralOverride != '\0')
+                    ? a.structuralOverride
+                    : m_impl->materialSystem.SampleGlyph(matId, luma);
+                ColorRGBA col = m_impl->materialSystem.SampleColor(matId, luma);
                 float depth = MathIso::ComputeDepthKey(worldPt);
 
-                // Insercion O(1) en el Screen-Space ASCII Z-Buffer.
-                if (!m_impl->zBuffer.SubmitAtom(screenPt.x, screenPt.y, depth, glyph, col, inst.materialId, mat.outline)) {
+                if (!m_impl->zBuffer.SubmitAtom(zoomedX, zoomedY, depth, glyph, col, matId, mat.outline, splatRadius)) {
                     ++atomsCulledScreen;
                 }
             }
@@ -470,12 +579,11 @@ namespace AsciiEngine {
         auto zbufEnd = Clock::now();
 
         // =========================================================================
-        // ETAPA 7 & 8: RASTERIZADO BATCH UNICO EN GPU + OVERLAYS (F4) + DEBUG HUD (F3)
+        // ETAPA 7 & 8: BATCH DRAW GPU + OVERLAYS (F4) + TELEMETRIA (F3)
         // =========================================================================
         auto gpuStart = Clock::now();
 
         BeginDrawing();
-
         // Fondo gris oscuro neutro (RGB 30, 32, 36).
         ClearBackground({ 30, 32, 36, 255 });
 
@@ -484,8 +592,7 @@ namespace AsciiEngine {
             &m_impl->renderFont,
             &m_impl->glyphLUT,
             m_impl->glyphAspectRatio,
-            m_impl->enableOutlines,
-            2.2f
+            m_impl->zBufferStyle
         );
 
         // Overlays visuales (F4) sobre el viewport.
@@ -500,7 +607,7 @@ namespace AsciiEngine {
         t.gpuDrawMs = ElapsedMs(gpuStart, gpuEnd);
         t.totalChunks = m_impl->spatialGrid.GetTotalChunks();
         t.activeChunks = static_cast<uint32_t>(m_impl->activeChunks.size());
-        t.totalInstances = static_cast<uint32_t>(m_impl->instances.size());
+        t.totalInstances = static_cast<uint32_t>(instances.size());
         t.instancesEvaluated = static_cast<uint32_t>(m_impl->visibleInstanceIds.size());
         t.instancesRendered = instancesRendered;
         t.atomsEvaluated = atomsEvaluated;
@@ -509,7 +616,7 @@ namespace AsciiEngine {
         t.outlineCellsDrawn = zStats.outlineCellsDrawn;
         t.zBufferBytes = m_impl->zBuffer.GetMemoryBytes();
         t.spatialGridBytes = m_impl->spatialGrid.GetMemoryBytes();
-        t.bakedCloudBytes = m_impl->cachedBakedCloudBytes;
+        t.bakedCloudBytes = m_impl->world.GetBakedMemoryBytes();
         t.gridWidth = m_impl->zBuffer.GetGridWidth();
         t.gridHeight = m_impl->zBuffer.GetGridHeight();
 

@@ -27,6 +27,9 @@ namespace AsciiEngine {
         // Carga los archivos de datos JSON (en Fase 1: materials.json).
         bool LoadRegistry(const std::string& dataRoot);
 
+        // Carga las instancias del mapa JSON y construye el SpatialHashGrid.
+        bool LoadMap(const std::string& mapPath);
+
         // Indica si la ventana sigue abierta.
         bool IsRunning() const;
 

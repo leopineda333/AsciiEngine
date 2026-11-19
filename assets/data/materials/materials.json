@@ -2,11 +2,11 @@
   "materials": [
     {
       "id": "metal_iron",
-      "asciiRamp": " .,+#%@",
+      "asciiRamp": ".,+#%@",
       "colors": {
-        "dark": "#262B33",
-        "normal": "#6E7B8B",
-        "lit": "#DCE6F2"
+        "dark": "#353C47",
+        "normal": "#788799",
+        "lit": "#E2ECF7"
       },
       "gridMode": "REGULAR",
       "properties": {
@@ -18,11 +18,11 @@
     },
     {
       "id": "wood_bark",
-      "asciiRamp": " .:|I#H@",
+      "asciiRamp": ".:|I#H@",
       "colors": {
-        "dark": "#26160D",
-        "normal": "#633D24",
-        "lit": "#A36B43"
+        "dark": "#382115",
+        "normal": "#6E4428",
+        "lit": "#AD744B"
       },
       "gridMode": "REGULAR",
       "properties": {
@@ -34,16 +34,16 @@
     },
     {
       "id": "foliage_pine",
-      "asciiRamp": " ,o0#@",
+      "asciiRamp": ",;o0#@",
       "colors": {
-        "dark": "#0C2615",
-        "normal": "#256338",
-        "lit": "#5EB068"
+        "dark": "#143821",
+        "normal": "#2B6E40",
+        "lit": "#64BA70"
       },
       "gridMode": "NOISY",
       "noisySettings": {
-        "jitter": 0.42,
-        "density": 0.78,
+        "jitter": 0.34,
+        "density": 0.86,
         "windWeight": 1.0
       },
       "properties": {
@@ -55,16 +55,16 @@
     },
     {
       "id": "stone_granite",
-      "asciiRamp": " .,:;irsX#&@",
+      "asciiRamp": ".,:;irsX#&@",
       "colors": {
-        "dark": "#232528",
-        "normal": "#6B7075",
-        "lit": "#B8C0C7"
+        "dark": "#353940",
+        "normal": "#747B82",
+        "lit": "#C4CCD4"
       },
       "gridMode": "NOISY",
       "noisySettings": {
-        "jitter": 0.22,
-        "density": 0.92,
+        "jitter": 0.18,
+        "density": 0.95,
         "windWeight": 0.0
       },
       "properties": {
@@ -76,11 +76,11 @@
     },
     {
       "id": "water_clear",
-      "asciiRamp": " ~=-+#",
+      "asciiRamp": "~=-+#",
       "colors": {
-        "dark": "#0E293B",
-        "normal": "#22658A",
-        "lit": "#85D4F2"
+        "dark": "#12344A",
+        "normal": "#276F96",
+        "lit": "#8AD8F5"
       },
       "gridMode": "REGULAR",
       "properties": {
@@ -92,16 +92,16 @@
     },
     {
       "id": "snow_fresh",
-      "asciiRamp": " .:*o#@",
+      "asciiRamp": ".:*o#@",
       "colors": {
-        "dark": "#4B5D73",
-        "normal": "#B7C9DB",
-        "lit": "#F4F9FF"
+        "dark": "#566A82",
+        "normal": "#BDD0E3",
+        "lit": "#F5FAFF"
       },
       "gridMode": "NOISY",
       "noisySettings": {
-        "jitter": 0.28,
-        "density": 0.88,
+        "jitter": 0.24,
+        "density": 0.92,
         "windWeight": 0.0
       },
       "properties": {

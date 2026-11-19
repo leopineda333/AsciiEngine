@@ -111,7 +111,7 @@ namespace AsciiEngine {
 
             if (entry.contains("noisySettings")) {
                 const auto& ns = entry["noisySettings"];
-                mat.jitter = MathIso::Clamp(ns.value("jitter", 0.35f), 0.0f, 0.5f);
+                mat.jitter = MathIso::Clamp(ns.value("jitter", 0.35f), 0.0f, 0.8f);
                 mat.density = MathIso::Clamp(ns.value("density", 0.80f), 0.05f, 1.0f);
                 mat.windWeight = MathIso::Clamp(ns.value("windWeight", 0.0f), 0.0f, 1.0f);
             }

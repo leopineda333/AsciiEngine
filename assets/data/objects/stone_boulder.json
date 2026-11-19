@@ -1,0 +1,25 @@
+{
+  "id": "stone_boulder",
+  "name": "Roca de Granito",
+  "collider": {
+    "type": "CIRCLE",
+    "radius": 1.65
+  },
+  "parts": [
+    {
+      "shape": "ELLIPSOID",
+      "materialId": "stone_granite",
+      "dimensions": {
+        "rx": 1.85,
+        "ry": 1.55,
+        "rz": 1.45
+      },
+      "offset": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 1.0
+      },
+      "step": 0.22
+    }
+  ]
+}
