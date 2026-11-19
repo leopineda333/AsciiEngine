@@ -1,37 +1,50 @@
 /**
  * @file Engine.hpp
- * @brief Interfaz publica (Facade) del motor AsciiEngine.
+ * @brief Fachada publica (Facade) del motor AsciiEngine.
  *
- * @details Este header NO incluye raylib.h ni json.hpp a proposito.
- * Cualquier proyecto externo (como Sandbox) solo ve tipos estandar de C++,
- * manteniendo el acoplamiento en cero y tiempos de compilacion minimos.
+ * @details Usa el patron Pimpl (Pointer to Implementation) para ocultar completamente
+ * los tipos internos de Raylib (Font, Rectangle, Camera2D) al proyecto consumidor.
  */
 #pragma once
+
+#include <memory>
+#include <string>
 
 namespace AsciiEngine {
 
     class Context {
     public:
-        // Inicializa la ventana grafica, el contexto de OpenGL y el reloj de FPS.
+        Context();
+        ~Context();
+
+        // Deshabilitamos copia para proteger la propiedad unica del contexto grafico.
+        Context(const Context&) = delete;
+        Context& operator=(const Context&) = delete;
+
+        // Inicializa ventana, atlas tipografico con LUT O(1) y subsistemas base.
         bool Initialize(int width, int height, const char* title);
 
-        // Indica si la ventana sigue abierta (false al pulsar ESC o cerrar ventana).
+        // Carga los archivos de datos JSON (en Fase 1: materials.json).
+        bool LoadRegistry(const std::string& dataRoot);
+
+        // Indica si la ventana sigue abierta.
         bool IsRunning() const;
 
-        // Devuelve el tiempo transcurrido desde el ultimo frame en segundos (Delta Time).
+        // Tiempo transcurrido del ultimo frame en segundos (Delta Time).
         float GetFrameTime() const;
 
-        // Actualiza la simulacion (en Fase 0 solo prepara el estado por frame).
+        // Actualiza controles interactivos de prueba y simulacion.
         void Update(float dt);
 
-        // Ejecuta el pase de renderizado limpiando con el gris oscuro neutro base.
+        // Ejecuta el renderizado de la escena activa.
         void Render() const;
 
-        // Libera el contexto grafico y cierra la ventana limpiamente.
+        // Libera fuentes, memoria y cierra Raylib.
         void Shutdown();
 
     private:
-        bool m_initialized = false; // Evita cierres dobles si Shutdown() se llama dos veces.
+        struct Impl;
+        std::unique_ptr<Impl> m_impl;
     };
 
 } // namespace AsciiEngine

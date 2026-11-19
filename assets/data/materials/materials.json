@@ -1,0 +1,115 @@
+{
+  "materials": [
+    {
+      "id": "metal_iron",
+      "asciiRamp": " .,+#%@",
+      "colors": {
+        "dark": "#262B33",
+        "normal": "#6E7B8B",
+        "lit": "#DCE6F2"
+      },
+      "gridMode": "REGULAR",
+      "properties": {
+        "roughness": 0.25,
+        "reflectivity": 0.45,
+        "occludesLight": true,
+        "outline": true
+      }
+    },
+    {
+      "id": "wood_bark",
+      "asciiRamp": " .:|I#H@",
+      "colors": {
+        "dark": "#26160D",
+        "normal": "#633D24",
+        "lit": "#A36B43"
+      },
+      "gridMode": "REGULAR",
+      "properties": {
+        "roughness": 0.85,
+        "reflectivity": 0.0,
+        "occludesLight": true,
+        "outline": true
+      }
+    },
+    {
+      "id": "foliage_pine",
+      "asciiRamp": " ,o0#@",
+      "colors": {
+        "dark": "#0C2615",
+        "normal": "#256338",
+        "lit": "#5EB068"
+      },
+      "gridMode": "NOISY",
+      "noisySettings": {
+        "jitter": 0.42,
+        "density": 0.78,
+        "windWeight": 1.0
+      },
+      "properties": {
+        "roughness": 0.90,
+        "reflectivity": 0.0,
+        "occludesLight": true,
+        "outline": true
+      }
+    },
+    {
+      "id": "stone_granite",
+      "asciiRamp": " .,:;irsX#&@",
+      "colors": {
+        "dark": "#232528",
+        "normal": "#6B7075",
+        "lit": "#B8C0C7"
+      },
+      "gridMode": "NOISY",
+      "noisySettings": {
+        "jitter": 0.22,
+        "density": 0.92,
+        "windWeight": 0.0
+      },
+      "properties": {
+        "roughness": 0.80,
+        "reflectivity": 0.0,
+        "occludesLight": true,
+        "outline": true
+      }
+    },
+    {
+      "id": "water_clear",
+      "asciiRamp": " ~=-+#",
+      "colors": {
+        "dark": "#0E293B",
+        "normal": "#22658A",
+        "lit": "#85D4F2"
+      },
+      "gridMode": "REGULAR",
+      "properties": {
+        "roughness": 0.10,
+        "reflectivity": 0.75,
+        "occludesLight": false,
+        "outline": false
+      }
+    },
+    {
+      "id": "snow_fresh",
+      "asciiRamp": " .:*o#@",
+      "colors": {
+        "dark": "#4B5D73",
+        "normal": "#B7C9DB",
+        "lit": "#F4F9FF"
+      },
+      "gridMode": "NOISY",
+      "noisySettings": {
+        "jitter": 0.28,
+        "density": 0.88,
+        "windWeight": 0.0
+      },
+      "properties": {
+        "roughness": 0.65,
+        "reflectivity": 0.15,
+        "occludesLight": true,
+        "outline": false
+      }
+    }
+  ]
+}
