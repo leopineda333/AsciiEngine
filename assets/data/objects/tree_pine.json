@@ -1,0 +1,54 @@
+{
+  "id": "tree_pine",
+  "name": "Pino Silvestre",
+  "collider": {
+    "type": "CIRCLE",
+    "radius": 0.65
+  },
+  "parts": [
+    {
+      "shape": "CYLINDER",
+      "materialId": "wood_bark",
+      "dimensions": {
+        "radius": 0.48,
+        "height": 3.4
+      },
+      "offset": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "step": 0.22
+    },
+    {
+      "shape": "CONE",
+      "materialId": "foliage_pine",
+      "dimensions": {
+        "radius": 2.2,
+        "height": 4.2
+      },
+      "offset": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 2.1
+      },
+      "step": 0.22,
+      "windWeight": 0.85
+    },
+    {
+      "shape": "CONE",
+      "materialId": "foliage_pine",
+      "dimensions": {
+        "radius": 1.55,
+        "height": 3.2
+      },
+      "offset": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 4.4
+      },
+      "step": 0.22,
+      "windWeight": 1.0
+    }
+  ]
+}

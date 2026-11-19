@@ -1,0 +1,98 @@
+{
+  "worldConfig": {
+    "worldHalfSize": 135.0,
+    "playerSpawn": {
+      "x": 0.0,
+      "y": 4.5
+    },
+    "culling": { "chunkSize": 24.0 }
+  },
+  "instances": [
+    {
+      "prefabId": "arch_wall",
+      "pos": {
+        "x": 0.0,
+        "y": -5.5,
+        "z": 0.0
+      },
+      "rotDeg": 0.0,
+      "scale": 1.0
+    },
+    {
+      "prefabId": "arch_wall",
+      "pos": {
+        "x": 9.5,
+        "y": 2.0,
+        "z": 0.0
+      },
+      "rotDeg": 90.0,
+      "scale": 1.0
+    },
+    {
+      "prefabId": "stone_boulder",
+      "pos": {
+        "x": -6.5,
+        "y": 2.0,
+        "z": 0.0
+      },
+      "rotDeg": 25.0,
+      "scale": 1.1
+    },
+    {
+      "prefabId": "stone_boulder",
+      "pos": {
+        "x": 5.5,
+        "y": 7.5,
+        "z": 0.0
+      },
+      "rotDeg": 70.0,
+      "scale": 0.9
+    },
+    {
+      "prefabId": "tree_pine",
+      "pos": {
+        "x": -5.8,
+        "y": -5.2,
+        "z": 0.0
+      },
+      "rotDeg": 15.0,
+      "scale": 1.05
+    },
+    {
+      "prefabId": "tree_pine",
+      "pos": {
+        "x": 5.8,
+        "y": -5.2,
+        "z": 0.0
+      },
+      "rotDeg": 45.0,
+      "scale": 1.15
+    }
+  ],
+  "scatterGroups": [
+    {
+      "prefabId": "tree_pine",
+      "count": 500,
+      "minX": -125.0,
+      "maxX": 125.0,
+      "minY": -125.0,
+      "maxY": 125.0,
+      "clearCenterRadius": 14.0,
+      "scaleMin": 0.85,
+      "scaleMax": 1.30,
+      "seed": 17.3
+    },
+    {
+      "prefabId": "stone_boulder",
+      "count": 80,
+      "minX": -120.0,
+      "maxX": 120.0,
+      "minY": -120.0,
+      "maxY": 120.0,
+      "clearCenterRadius": 13.0,
+      "scaleMin": 0.75,
+      "scaleMax": 1.35,
+      "seed": 42.9
+    }
+  ]
+}
