@@ -424,3 +424,21 @@ FodyWeavers.xsd
 
 # Official VS Code C# Dev Kit Extension exclusion
 #*.lscache
+
+
+# Archivos de solucion y proyectos generados localmente
+*.sln
+*.vcxproj
+*.vcxproj.filters
+*.vcxproj.user
+.vs/
+
+# Carpetas de compilacion y temporales
+bin/
+bin-int/
+out/
+build/
+x64/
+*.pdb
+*.obj
+*.ilk
