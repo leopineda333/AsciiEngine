@@ -7,6 +7,7 @@
  */
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 
 namespace AsciiEngine {
@@ -31,7 +32,6 @@ namespace AsciiEngine {
         float width = 0.0f;
         float height = 0.0f;
 
-        // Comprueba interseccion AABB vs AABB en O(1) sin ramificaciones costosas.
         bool Intersects(const Rect2D& other) const {
             return (x < other.x + other.width) && (x + width > other.x) &&
                 (y < other.y + other.height) && (y + height > other.y);
@@ -46,11 +46,9 @@ namespace AsciiEngine {
         uint8_t a = 255;
     };
 
-    // Identificador numerico de material (2 bytes). Evita comparar strings en el render loop.
     using MaterialId = uint16_t;
     constexpr MaterialId FALLBACK_MATERIAL_ID = 0;
 
-    // Modo de distribucion espacial de los atomos al hornear geometria.
     enum class GridMode : uint8_t {
         REGULAR = 0, // Paso uniforme exacto (solidos, metales, muros).
         NOISY = 1  // Perturbacion determinista y porosidad (hojas, piedra, nieve).
@@ -71,25 +69,35 @@ namespace AsciiEngine {
         uint32_t totalChunks = 0;
         uint32_t activeChunks = 0;
         uint32_t totalInstances = 0;
-        uint32_t instancesEvaluated = 0; // Sobrevivieron a Capa 1 (Spatial Hash)
-        uint32_t instancesRendered = 0; // Sobrevivieron a Capa 2 (Frustum 2D)
-        uint32_t atomsEvaluated = 0; // Atomos enviados al Z-Buffer
-        uint32_t atomsCulledScreen = 0; // Descartados en Capa 3 (fuera de pantalla)
-        uint32_t glyphsRendered = 0; // Celdas ocupadas dibujadas (Zero Overdraw)
-        uint32_t outlineCellsDrawn = 0; // Celdas de contorno que recibieron borde negro
+        uint32_t instancesEvaluated = 0;
+        uint32_t instancesRendered = 0;
+        uint32_t atomsEvaluated = 0;
+        uint32_t atomsCulledScreen = 0;
+        uint32_t glyphsRendered = 0;
+        uint32_t outlineCellsDrawn = 0;
 
-        // Memoria (RAM real del proceso + memoria de subsistemas clave).
-        float    processRamMB = 0.0f;
-        size_t   zBufferBytes = 0;
-        size_t   spatialGridBytes = 0;
-        size_t   bakedCloudBytes = 0;
+        // Memoria (RAM real del proceso + subsistemas clave).
+        float  processRamMB = 0.0f;
+        size_t zBufferBytes = 0;
+        size_t spatialGridBytes = 0;
+        size_t bakedCloudBytes = 0;
+        size_t heightfieldBytes = 0;
+
+        // Estado de iluminacion y ciclo dia/noche (Fase 4).
+        float    timeOfDayHours = 12.0f;
+        bool     isNight = false;
+        bool     dayCycleRunning = true;
+        bool     shadowsEnabled = true;
+        bool     torchEnabled = true;
+        uint32_t activePointLights = 0;
+        uint32_t totalMapLights = 0;
 
         // Estado de escena y resolucion de grilla.
-        Vec2     cameraWorldPos = {};
-        float    cameraZoom = 1.0f;
-        int      gridWidth = 0;
-        int      gridHeight = 0;
-        bool     outlinesActive = true;
+        Vec2  cameraWorldPos = {};
+        float cameraZoom = 1.0f;
+        int   gridWidth = 0;
+        int   gridHeight = 0;
+        bool  outlinesActive = true;
     };
 
 } // namespace AsciiEngine

@@ -5,8 +5,64 @@
       "x": 0.0,
       "y": 4.5
     },
-    "culling": { "chunkSize": 24.0 }
+    "culling": { "chunkSize": 24.0 },
+    "dayNightCycle": {
+      "enabled": true,
+      "currentTimeHours": 9.5,
+      "dayLengthSeconds": 90.0
+    },
+    "globalIllumination": {
+      "skyColor": "#B4D2F0",
+      "groundColor": "#283626",
+      "ambientStrength": 0.32
+    }
   },
+  "lights": [
+    {
+      "pos": {
+        "x": -3.2,
+        "y": -4.6,
+        "z": 2.4
+      },
+      "color": "#FF9838",
+      "intensity": 1.65,
+      "radius": 11.5,
+      "flicker": true
+    },
+    {
+      "pos": {
+        "x": 3.2,
+        "y": -4.6,
+        "z": 2.4
+      },
+      "color": "#FF9838",
+      "intensity": 1.65,
+      "radius": 11.5,
+      "flicker": true
+    },
+    {
+      "pos": {
+        "x": 8.4,
+        "y": 2.0,
+        "z": 2.6
+      },
+      "color": "#64D2FF",
+      "intensity": 1.45,
+      "radius": 12.0,
+      "flicker": true
+    },
+    {
+      "pos": {
+        "x": -6.5,
+        "y": 2.0,
+        "z": 2.2
+      },
+      "color": "#A4FF88",
+      "intensity": 1.15,
+      "radius": 9.5,
+      "flicker": false
+    }
+  ],
   "instances": [
     {
       "prefabId": "arch_wall",

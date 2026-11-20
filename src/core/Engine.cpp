@@ -1,12 +1,13 @@
 /**
  * @file Engine.cpp
- * @brief Integracion de Fase 3: World Data-Driven (Flyweight), CollisionSolver y Z-Buffer O(N).
+ * @brief Integracion de Fase 4: Ciclo Dia-Noche, GI Hemisferica, Luces Puntuales y Sombras 2.5D.
  */
 #include <AsciiEngine/Engine.hpp>
 #include <AsciiEngine/MathIso.hpp>
 #include <AsciiEngine/MaterialSystem.hpp>
 #include <AsciiEngine/AsciiZBuffer.hpp>
 #include <AsciiEngine/CullingSystem.hpp>
+#include <AsciiEngine/LightingSystem.hpp>
 #include <AsciiEngine/World.hpp>
 #include <AsciiEngine/DebugHUD.hpp>
 #include "raylib.h"
@@ -29,8 +30,8 @@ namespace AsciiEngine {
 
     struct Context::Impl {
         bool initialized = false;
-        int screenWidth = 1600;
-        int screenHeight = 900;
+        int  screenWidth = 1600;
+        int  screenHeight = 900;
 
         // Tipografia con Lookup Table O(1).
         Font renderFont = {};
@@ -47,6 +48,7 @@ namespace AsciiEngine {
         MathIso::IsoConfig isoConfig;
         AsciiZBuffer       zBuffer;
         SpatialHashGrid    spatialGrid{ 24.0f };
+        LightingSystem     lightingSystem;
         World              world;
         DebugHUD           debugHUD;
 
@@ -54,9 +56,9 @@ namespace AsciiEngine {
         SimpleActor player;
         MaterialId  playerBodyMat = FALLBACK_MATERIAL_ID;
         MaterialId  playerHeadMat = FALLBACK_MATERIAL_ID;
+        bool        playerTorchOn = true;
 
-        // Camara 2D isometrica y configuracion del Z-Buffer.
-        // Rejilla Z-Buffer calibrada (7x12 px: caracteres legibles y estilizados) y rango de zoom artistico.
+        // Camara 2D isometrica y rejilla Z-Buffer calibrada (7x12 px) con zoom artistico.
         Camera2D camera = {};
         float viewPaddingPx = 140.0f;
         float cellWidthPx = 7.0f;
@@ -64,12 +66,7 @@ namespace AsciiEngine {
         float minZoom = 0.75f;
         float maxZoom = 1.45f;
 
-        // Iluminacion de prueba y estilo de contornos.
-        float lightAngleRad = 0.85f;
-        float lightElevation = 0.72f;
-        float lightIntensity = 1.05f;
-        bool  autoOrbitLight = false;
-        ZBufferStyle zBufferStyle; // Contiene enableOutlines, enableAsciiBorder, pixelOutlinePx = 1.5f, etc.
+        ZBufferStyle zBufferStyle;
 
         // Buffers pre-alojados para consultas de render y fisica (cero asignaciones por frame).
         std::vector<uint32_t>   visibleInstanceIds;
@@ -87,7 +84,7 @@ namespace AsciiEngine {
             customFontLoaded = false;
             for (const char* path : candidates) {
                 if (FileExists(path)) {
-                    // 24px + mipmaps trilineales: trazos suaves y limpios sin borroneo ni pixel-art duro.
+                    // 24px + mipmaps trilineales: trazos suaves y limpios sin pixel-art duro.
                     renderFont = LoadFontEx(path, 24, nullptr, 95);
                     GenTextureMipmaps(&renderFont.texture);
                     SetTextureFilter(renderFont.texture, TEXTURE_FILTER_TRILINEAR);
@@ -121,8 +118,9 @@ namespace AsciiEngine {
             };
         }
 
-        // Calcula el rango de chunks [minCX..maxCX, minCY..maxCY] que intersectan la pantalla.
-        ChunkRange ComputeVisibleChunkRange() const {
+        // Calcula el rectangulo del mundo [minWX..maxWX, minWY..maxWY] visible en pantalla.
+        void ComputeVisibleWorldBounds(float& outMinWX, float& outMaxWX,
+            float& outMinWY, float& outMaxWY) const {
             const float pad = viewPaddingPx;
             const std::array<Vec2, 4> corners = { {
                 { -pad, -pad },
@@ -131,17 +129,19 @@ namespace AsciiEngine {
                 { static_cast<float>(screenWidth) + pad, static_cast<float>(screenHeight) + pad * 2.0f }
             } };
 
-            float minWX = 1e9f, maxWX = -1e9f;
-            float minWY = 1e9f, maxWY = -1e9f;
+            outMinWX = 1e9f;  outMaxWX = -1e9f;
+            outMinWY = 1e9f;  outMaxWY = -1e9f;
 
             for (const Vec2& c : corners) {
                 Vec2 worldPt = MathIso::IsoToWorldGround(ScreenToIso(c), isoConfig);
-                minWX = std::min(minWX, worldPt.x);
-                maxWX = std::max(maxWX, worldPt.x);
-                minWY = std::min(minWY, worldPt.y);
-                maxWY = std::max(maxWY, worldPt.y);
+                outMinWX = std::min(outMinWX, worldPt.x);
+                outMaxWX = std::max(outMaxWX, worldPt.x);
+                outMinWY = std::min(outMinWY, worldPt.y);
+                outMaxWY = std::max(outMaxWY, worldPt.y);
             }
+        }
 
+        ChunkRange ComputeVisibleChunkRange(float minWX, float maxWX, float minWY, float maxWY) const {
             const float invChunk = 1.0f / spatialGrid.GetChunkSize();
             return {
                 static_cast<int32_t>(std::floor(minWX * invChunk)),
@@ -151,8 +151,65 @@ namespace AsciiEngine {
             };
         }
 
-        // Envia una capsula sencilla del jugador al Z-Buffer para validar oclusion real detras de objetos.
-        void SubmitPlayerAvatarToZBuffer(Vec3 lightDir, int splatRadius, uint32_t& atomsEvaluated, uint32_t& atomsCulled) {
+        // Renderiza el terreno ASCII (Z = 0) anclado al mundo para mostrar sombras 2.5D y halos de luz.
+        // Rellena unicamente las celdas vacias del Z-Buffer con el terreno ASCII y sombras 2.5D.
+        // Al ejecutarse despues de los objetos, ahorra rayos de sombra y garantiza sombras continuas.
+        void SubmitGroundPlaneToZBuffer(float zoom, uint32_t& atomsEvaluated) {
+            const int     gridW = zBuffer.GetGridWidth();
+            const int     gridH = zBuffer.GetGridHeight();
+            const int32_t origX = zBuffer.GetOriginCellX();
+            const int32_t origY = zBuffer.GetOriginCellY();
+            const float   cellW = zBuffer.GetCellWidth();
+            const float   cellH = zBuffer.GetCellHeight();
+            const float   invZoom = 1.0f / zoom;
+            const float   limit = world.GetWorldHalfSize();
+
+            for (int cy = 0; cy < gridH; ++cy) {
+                const float isoY = (static_cast<float>(origY + cy) + 0.5f) * cellH * invZoom;
+                for (int cx = 0; cx < gridW; ++cx) {
+                    if (!zBuffer.IsCellEmpty(cx, cy)) continue;
+
+                    const float isoX = (static_cast<float>(origX + cx) + 0.5f) * cellW * invZoom;
+                    Vec2 groundW = MathIso::IsoToWorldGround({ isoX, isoY }, isoConfig);
+
+                    if (groundW.x < -limit || groundW.x > limit || groundW.y < -limit || groundW.y > limit) {
+                        continue;
+                    }
+
+                    ++atomsEvaluated;
+                    float noise = MathIso::Hash3D(static_cast<float>(origX + cx), static_cast<float>(origY + cy), 0.0f, 5.41f);
+                    ShadedAtom shaded = lightingSystem.ShadeGroundPoint({ groundW.x, groundW.y, 0.0f }, noise, true);
+
+                    if (shaded.glyph != '\0') {
+                        float depth = MathIso::ComputeDepthKey({ groundW.x, groundW.y, 0.0f }) - 0.15f;
+                        zBuffer.SetGroundCell(cx, cy, depth, shaded.glyph, shaded.color);
+                    }
+                }
+            }
+        }
+
+        // Dibuja un destello ASCII en el origen de cada luz estatica del mapa (antorchas/cristales).
+        void SubmitLightMarkersToZBuffer(float zoom, float camTopLeftX, float camTopLeftY) {
+            const float screenW = static_cast<float>(screenWidth);
+            const float screenH = static_cast<float>(screenHeight);
+
+            for (const PointLight& pl : lightingSystem.GetMapLights()) {
+                Vec2 isoPt = MathIso::WorldToIso(pl.position, isoConfig);
+                float zoomedX = isoPt.x * zoom;
+                float zoomedY = isoPt.y * zoom;
+                float sx = zoomedX - camTopLeftX;
+                float sy = zoomedY - camTopLeftY;
+
+                if (sx < 0.0f || sx >= screenW || sy < 0.0f || sy >= screenH) continue;
+
+                // Nucleo brillante de la fuente de luz (sin outline para efecto emisivo).
+                zBuffer.SubmitAtom(zoomedX, zoomedY, MathIso::ComputeDepthKey(pl.position) + 0.05f,
+                    '*', pl.color, FALLBACK_MATERIAL_ID, false, 0, false);
+            }
+        }
+
+        // Envia la capsula del jugador al Z-Buffer usando el LightingSystem completo.
+        void SubmitPlayerAvatarToZBuffer(int splatRadius, uint32_t& atomsEvaluated, uint32_t& atomsCulled) {
             const float step = 0.22f;
             const float bodyR = 0.55f;
             const float bodyH = 1.85f;
@@ -168,22 +225,18 @@ namespace AsciiEngine {
 
                         Vec3 worldPt = { player.position.x + x, player.position.y + y, z };
                         Vec3 norm = MathIso::Normalize({ x, y, 0.25f });
-
-                        float diff = std::max(0.0f, MathIso::Dot(norm, lightDir)) * lightIntensity;
-                        float luma = MathIso::Clamp(diff + 0.28f, 0.0f, 1.0f);
+                        ShadedAtom s = lightingSystem.ShadeAtom(worldPt, norm, 0.95f, materialSystem, playerBodyMat, true);
 
                         Vec2 isoPt = MathIso::WorldToIso(worldPt, isoConfig);
                         if (!zBuffer.SubmitAtom(isoPt.x * zoom, isoPt.y * zoom, MathIso::ComputeDepthKey(worldPt),
-                            materialSystem.SampleGlyph(playerBodyMat, luma),
-                            materialSystem.SampleColor(playerBodyMat, luma),
-                            playerBodyMat, true, splatRadius)) {
+                            s.glyph, s.color, playerBodyMat, true, splatRadius, false)) {
                             ++atomsCulled;
                         }
                     }
                 }
             }
 
-            // 2. Cabeza esferica brillante (material snow_fresh) para destacar entre los pinos.
+            // 2. Cabeza esferica (material snow_fresh).
             const float headR = 0.48f;
             const float headZ = bodyH + 0.45f;
             for (float z = -headR; z <= headR; z += step) {
@@ -194,15 +247,11 @@ namespace AsciiEngine {
 
                         Vec3 worldPt = { player.position.x + x, player.position.y + y, headZ + z };
                         Vec3 norm = MathIso::Normalize({ x, y, z });
-
-                        float diff = std::max(0.0f, MathIso::Dot(norm, lightDir)) * lightIntensity;
-                        float luma = MathIso::Clamp(diff + 0.35f, 0.0f, 1.0f);
+                        ShadedAtom s = lightingSystem.ShadeAtom(worldPt, norm, 1.0f, materialSystem, playerHeadMat, true);
 
                         Vec2 isoPt = MathIso::WorldToIso(worldPt, isoConfig);
                         if (!zBuffer.SubmitAtom(isoPt.x * zoom, isoPt.y * zoom, MathIso::ComputeDepthKey(worldPt),
-                            materialSystem.SampleGlyph(playerHeadMat, luma),
-                            materialSystem.SampleColor(playerHeadMat, luma),
-                            playerHeadMat, true, splatRadius)) {
+                            s.glyph, s.color, playerHeadMat, true, splatRadius, false)) {
                             ++atomsCulled;
                         }
                     }
@@ -249,7 +298,7 @@ namespace AsciiEngine {
             }
         }
 
-        // Overlays visuales (F4): Chunks activos en cian + Volumenes de colision en verde + Jugador en amarillo.
+        // Overlays visuales (F4): Chunks (cian), Colisiones (verde), Luces (naranja) y Vector Solar (amarillo).
         void RenderDebugOverlays() const {
             if (!debugHUD.AreOverlaysVisible()) {
                 return;
@@ -260,7 +309,7 @@ namespace AsciiEngine {
             for (const ChunkCoord& cc : activeChunks) {
                 float x0 = static_cast<float>(cc.cx) * cs;
                 float y0 = static_cast<float>(cc.cy) * cs;
-                DrawIsoOBB({ x0 + cs * 0.5f, y0 + cs * 0.5f }, { cs * 0.5f, cs * 0.5f }, 1.0f, 0.0f, { 0, 220, 240, 110 });
+                DrawIsoOBB({ x0 + cs * 0.5f, y0 + cs * 0.5f }, { cs * 0.5f, cs * 0.5f }, 1.0f, 0.0f, { 0, 220, 240, 100 });
             }
 
             // 2. Volumenes de colision de instancias visibles (verde).
@@ -296,8 +345,22 @@ namespace AsciiEngine {
                 }
             }
 
-            // 3. Circulo de colision del jugador (amarillo).
+            // 3. Radios de alcance de las luces puntuales activas (naranja).
+            for (const ActiveFrameLight& al : lightingSystem.GetActiveLights()) {
+                DrawIsoCircle({ al.position.x, al.position.y }, 1.0f / al.invRadius, { 255, 165, 60, 120 });
+            }
+
+            // 4. Circulo de colision del jugador + vector direccional del Sol/Luna.
             DrawIsoCircle(player.position, player.collisionRadius, GOLD);
+
+            const SunState& sun = lightingSystem.GetSunState();
+            Vec2 pStart = IsoToScreen(MathIso::WorldToIso({ player.position.x, player.position.y, 2.5f }, isoConfig));
+            Vec2 pEnd = IsoToScreen(MathIso::WorldToIso({
+                player.position.x + sun.lightDir.x * 5.0f,
+                player.position.y + sun.lightDir.y * 5.0f,
+                2.5f + sun.lightDir.z * 5.0f
+                }, isoConfig));
+            DrawLineEx({ pStart.x, pStart.y }, { pEnd.x, pEnd.y }, 2.0f, sun.isNight ? SKYBLUE : YELLOW);
         }
     };
 
@@ -343,14 +406,20 @@ namespace AsciiEngine {
         bool ok = m_impl->world.LoadMapFromFile(mapPath, m_impl->spatialGrid);
 
         if (ok) {
-            // Ubicamos al jugador y a la camara en el spawn definido por el mapa JSON.
             m_impl->player.position = m_impl->world.GetPlayerSpawn();
             m_impl->player.velocity = { 0.0f, 0.0f };
 
             Vec2 spawnIso = MathIso::WorldToIso({ m_impl->player.position.x, m_impl->player.position.y, 1.0f }, m_impl->isoConfig);
             m_impl->camera.target = { spawnIso.x, spawnIso.y };
 
-            // Pre-reservamos los buffers de consulta para cero asignaciones en el bucle principal.
+            // Configuramos iluminacion dinamica y horneamos el Heightfield 2D de sombras del mapa.
+            m_impl->lightingSystem.Configure(
+                m_impl->world.GetDayNightConfig(),
+                m_impl->world.GetGIConfig(),
+                m_impl->world.GetMapLights()
+            );
+            m_impl->lightingSystem.BuildShadowHeightfield(m_impl->world, m_impl->materialSystem, 0.6f);
+
             m_impl->visibleInstanceIds.reserve(m_impl->world.GetInstances().size());
             m_impl->activeChunks.reserve(m_impl->spatialGrid.GetTotalChunks());
             m_impl->physicsQueryIds.reserve(128);
@@ -370,7 +439,6 @@ namespace AsciiEngine {
     void Context::Update(float dt) {
         auto simStart = Clock::now();
 
-        // Sincronizar tamano de ventana y Z-Buffer si se redimensiona.
         m_impl->screenWidth = GetScreenWidth();
         m_impl->screenHeight = GetScreenHeight();
         m_impl->camera.offset = { m_impl->screenWidth * 0.5f, m_impl->screenHeight * 0.5f };
@@ -397,13 +465,12 @@ namespace AsciiEngine {
             m_impl->physicsQueryChunks
         );
 
-        // 3. Seguimiento suave de camara al jugador + Zoom con rueda.
+        // 3. Seguimiento suave de camara al jugador + Zoom artistico acotado.
         Vec2 targetIso = MathIso::WorldToIso({ m_impl->player.position.x, m_impl->player.position.y, 1.2f }, m_impl->isoConfig);
         float camSmooth = MathIso::Clamp(9.0f * dt, 0.0f, 1.0f);
         m_impl->camera.target.x = MathIso::Lerp(m_impl->camera.target.x, targetIso.x, camSmooth);
         m_impl->camera.target.y = MathIso::Lerp(m_impl->camera.target.y, targetIso.y, camSmooth);
 
-        // Zoom suave con rueda del raton.
         float wheel = GetMouseWheelMove();
         if (wheel != 0.0f) {
             m_impl->camera.zoom = MathIso::Clamp(
@@ -413,49 +480,78 @@ namespace AsciiEngine {
             );
         }
 
-        // 4. Controles de diagnostico y Hot-Reloading (F5 recarga materiales, objetos y mapa).
-        if (IsKeyPressed(KEY_SPACE)) m_impl->autoOrbitLight = !m_impl->autoOrbitLight;
-        if (m_impl->autoOrbitLight)  m_impl->lightAngleRad += dt * 0.55f;
-        if (IsKeyDown(KEY_LEFT)) { m_impl->autoOrbitLight = false; m_impl->lightAngleRad -= dt * 2.0f; }
-        if (IsKeyDown(KEY_RIGHT)) { m_impl->autoOrbitLight = false; m_impl->lightAngleRad += dt * 2.0f; }
-        if (IsKeyPressed(KEY_O))  m_impl->zBufferStyle.enableOutlines = !m_impl->zBufferStyle.enableOutlines;
-        if (IsKeyPressed(KEY_B))  m_impl->zBufferStyle.enableAsciiBorder = !m_impl->zBufferStyle.enableAsciiBorder;
-        if (IsKeyPressed(KEY_F3)) m_impl->debugHUD.ToggleTelemetry();
-        if (IsKeyPressed(KEY_F4)) m_impl->debugHUD.ToggleOverlays();
+        // 4. Controles de Ciclo Dia-Noche, Sombras, Antorcha y Hot-Reloading.
+        if (IsKeyPressed(KEY_SPACE)) m_impl->lightingSystem.ToggleCycleRunning();
+        if (IsKeyDown(KEY_LEFT))     m_impl->lightingSystem.AdjustTimeHours(-dt * 4.5f);
+        if (IsKeyDown(KEY_RIGHT))    m_impl->lightingSystem.AdjustTimeHours(dt * 4.5f);
+        if (IsKeyPressed(KEY_H))     m_impl->lightingSystem.ToggleShadows();
+        if (IsKeyPressed(KEY_T))     m_impl->playerTorchOn = !m_impl->playerTorchOn;
+        if (IsKeyPressed(KEY_O))     m_impl->zBufferStyle.enableOutlines = !m_impl->zBufferStyle.enableOutlines;
+        if (IsKeyPressed(KEY_B))     m_impl->zBufferStyle.enableAsciiBorder = !m_impl->zBufferStyle.enableAsciiBorder;
+        if (IsKeyPressed(KEY_F3))    m_impl->debugHUD.ToggleTelemetry();
+        if (IsKeyPressed(KEY_F4))    m_impl->debugHUD.ToggleOverlays();
         if (IsKeyPressed(KEY_F5)) {
-            Vec2 savedPlayerPos = m_impl->player.position;
+            Vec2 savedPos = m_impl->player.position;
+            float savedHr = m_impl->lightingSystem.GetTimeHours();
             LoadRegistry(m_impl->dataRootPath);
             if (!m_impl->activeMapPath.empty()) {
                 LoadMap(m_impl->activeMapPath);
-                m_impl->player.position = savedPlayerPos; // Conservamos posicion al recargar en vivo.
+                m_impl->player.position = savedPos;
+                m_impl->lightingSystem.AdjustTimeHours(savedHr - m_impl->lightingSystem.GetTimeHours());
             }
         }
 
+        // 5. Avanzar ciclo Dia-Noche y parpadeo de luces.
+        m_impl->lightingSystem.Update(dt);
+
         auto simEnd = Clock::now();
 
-        // Actualizar telemetria base de rendimiento y memoria.
+        // Actualizar telemetria del frame.
+        const SunState& sun = m_impl->lightingSystem.GetSunState();
         m_impl->telemetry.simTimeMs = ElapsedMs(simStart, simEnd);
         m_impl->telemetry.fps = static_cast<float>(GetFPS());
         m_impl->telemetry.frameTimeMs = dt * 1000.0f;
         m_impl->telemetry.cameraWorldPos = m_impl->player.position;
         m_impl->telemetry.cameraZoom = m_impl->camera.zoom;
         m_impl->telemetry.outlinesActive = m_impl->zBufferStyle.enableOutlines;
+        m_impl->telemetry.timeOfDayHours = m_impl->lightingSystem.GetTimeHours();
+        m_impl->telemetry.isNight = sun.isNight;
+        m_impl->telemetry.dayCycleRunning = m_impl->lightingSystem.IsCycleRunning();
+        m_impl->telemetry.shadowsEnabled = m_impl->lightingSystem.AreShadowsEnabled();
+        m_impl->telemetry.torchEnabled = m_impl->playerTorchOn;
+        m_impl->telemetry.totalMapLights = static_cast<uint32_t>(m_impl->lightingSystem.GetMapLights().size());
         m_impl->debugHUD.UpdateMetrics(m_impl->telemetry, dt);
     }
 
     void Context::Render() const {
         // =========================================================================
-        // ETAPA 5: CULLING CAPA 1 (Spatial Hash Grid)
+        // ETAPA 5: CULLING CAPA 1 (Spatial Hash Grid) + CULLING DE LUCES ACTIVAS
         // =========================================================================
         auto cullStart = Clock::now();
 
-        ChunkRange visibleRange = m_impl->ComputeVisibleChunkRange();
+        float minWX = 0.0f, maxWX = 0.0f, minWY = 0.0f, maxWY = 0.0f;
+        m_impl->ComputeVisibleWorldBounds(minWX, maxWX, minWY, maxWY);
+        ChunkRange visibleRange = m_impl->ComputeVisibleChunkRange(minWX, maxWX, minWY, maxWY);
         m_impl->spatialGrid.QueryChunks(visibleRange, m_impl->visibleInstanceIds, m_impl->activeChunks);
+
+        // Construimos la antorcha dinamica del jugador si esta encendida.
+        PointLight playerTorch;
+        const PointLight* torchPtr = nullptr;
+        if (m_impl->playerTorchOn) {
+            playerTorch.position = { m_impl->player.position.x, m_impl->player.position.y, 2.3f };
+            playerTorch.color = { 255, 190, 110, 255 };
+            playerTorch.intensity = 1.45f;
+            playerTorch.radius = 11.0f;
+            playerTorch.flicker = true;
+            playerTorch.flickerPhase = 0.7f;
+            torchPtr = &playerTorch;
+        }
+        m_impl->lightingSystem.PrepareFrameLights(minWX, maxWX, minWY, maxWY, torchPtr);
 
         auto cullEnd = Clock::now();
 
         // =========================================================================
-        // ETAPA 6: FRUSTUM 2D (CAPA 2) + ILUMINACION + ASCII Z-BUFFER O(N) (CAPA 3)
+        // ETAPA 6: TERRENO + FRUSTUM 2D + ILUMINACION/SOMBRAS + Z-BUFFER O(N)
         // =========================================================================
         auto zbufStart = Clock::now();
 
@@ -472,22 +568,21 @@ namespace AsciiEngine {
             static_cast<float>(m_impl->screenHeight) + m_impl->viewPaddingPx * 2.0f
         };
 
-        const Vec3 lightDir = MathIso::Normalize({
-            std::cos(m_impl->lightAngleRad),
-            std::sin(m_impl->lightAngleRad),
-            m_impl->lightElevation
-            });
-
         const int splatRadius = (zoom > 1.15f) ? 1 : 0;
 
         uint32_t instancesRendered = 0;
         uint32_t atomsEvaluated = 0;
         uint32_t atomsCulledScreen = 0;
 
-        // 1. Insertamos al jugador en el Z-Buffer.
-        m_impl->SubmitPlayerAvatarToZBuffer(lightDir, splatRadius, atomsEvaluated, atomsCulledScreen);
+        
 
-        // 2. Insertamos las instancias visibles del mundo (compartiendo prefabs Flyweight).
+        // 2. Destellos emisivos en el origen de las luces del mapa.
+        m_impl->SubmitLightMarkersToZBuffer(zoom, camTopLeftX, camTopLeftY);
+
+        // 3. Avatar del jugador sombreado por el LightingSystem.
+        m_impl->SubmitPlayerAvatarToZBuffer(splatRadius, atomsEvaluated, atomsCulledScreen);
+
+        // 4. Instancias visibles del mundo (Flyweight + GI + Sombras 2.5D + Luces Puntuales).
         const auto& instances = m_impl->world.GetInstances();
         const float screenW = static_cast<float>(m_impl->screenWidth);
         const float screenH = static_cast<float>(m_impl->screenHeight);
@@ -497,14 +592,13 @@ namespace AsciiEngine {
             const BakedPrefab* prefab = m_impl->world.GetPrefab(inst.prefabId);
             if (!prefab) continue;
 
-            // Capa 2 — Frustum Culling 2D usando radio y altura horneados del prefab.
+            // Capa 2 — Frustum Culling 2D.
             Vec2 baseScreen = m_impl->IsoToScreen(MathIso::WorldToIso(inst.position, m_impl->isoConfig));
             float maxScaleXY = std::max(inst.scale.x, inst.scale.y);
             float screenRadX = prefab->boundRadiusXY * maxScaleXY * m_impl->isoConfig.tileWidthHalf * zoom;
             float screenHgt = (prefab->boundHeightZ * inst.scale.z * m_impl->isoConfig.scaleZ
                 + prefab->boundRadiusXY * maxScaleXY * m_impl->isoConfig.tileHeightHalf) * zoom;
 
-            // Capa 2 — Frustum Culling 2D: proyectamos el centro y comprobamos su AABB de pantalla.
             Rect2D objRect = {
                 baseScreen.x - screenRadX,
                 baseScreen.y - screenHgt,
@@ -512,7 +606,7 @@ namespace AsciiEngine {
                 screenHgt + screenRadX * 0.6f
             };
             if (!viewportRect.Intersects(objRect)) {
-                continue; // Descartado en bloque antes de tocar su nube de puntos.
+                continue;
             }
 
             ++instancesRendered;
@@ -524,7 +618,6 @@ namespace AsciiEngine {
                 const BakedAtom& a = atoms[i];
                 ++atomsEvaluated;
 
-                // Escala local + rotacion Z usando cos/sin precalculados en MapInstance.
                 float sx = a.localPos.x * inst.scale.x;
                 float sy = a.localPos.y * inst.scale.y;
                 float sz = a.localPos.z * inst.scale.z;
@@ -535,12 +628,11 @@ namespace AsciiEngine {
                     inst.position.z + sz
                 };
 
-                // Proyeccion 3D -> Isometrico con zoom (invariante al desplazamiento de camara).
                 Vec2 isoPt = MathIso::WorldToIso(worldPt, m_impl->isoConfig);
                 float zoomedX = isoPt.x * zoom;
                 float zoomedY = isoPt.y * zoom;
 
-                // Pre-check rapido de Capa 3 (dejando 1 celda de margen para no cortar outlines en bordes).
+                // Pre-check rapido de Capa 3 antes de calcular sombras e iluminacion.
                 float screenX = zoomedX - camTopLeftX;
                 float screenY = zoomedY - camTopLeftY;
                 if (screenX < -m_impl->cellWidthPx || screenX >= screenW + m_impl->cellWidthPx ||
@@ -549,7 +641,6 @@ namespace AsciiEngine {
                     continue;
                 }
 
-                // Rotamos la normal al espacio del mundo para que la luz responda a rotDeg.
                 Vec3 worldNorm = {
                     a.localNormal.x * inst.cosRot - a.localNormal.y * inst.sinRot,
                     a.localNormal.x * inst.sinRot + a.localNormal.y * inst.cosRot,
@@ -561,21 +652,19 @@ namespace AsciiEngine {
                     : a.materialId;
                 const Material& mat = m_impl->materialSystem.Get(matId);
 
-                float diffuse = std::max(0.0f, MathIso::Dot(worldNorm, lightDir)) * m_impl->lightIntensity;
-                float luma = MathIso::Clamp((diffuse + 0.14f) * a.ao, 0.0f, 1.0f);
+                ShadedAtom shaded = m_impl->lightingSystem.ShadeAtom(
+                    worldPt, worldNorm, a.ao, m_impl->materialSystem, matId, true, a.structuralOverride
+                );
 
-                char glyph = (a.structuralOverride != '\0')
-                    ? a.structuralOverride
-                    : m_impl->materialSystem.SampleGlyph(matId, luma);
-                ColorRGBA col = m_impl->materialSystem.SampleColor(matId, luma);
                 float depth = MathIso::ComputeDepthKey(worldPt);
-
-                if (!m_impl->zBuffer.SubmitAtom(zoomedX, zoomedY, depth, glyph, col, matId, mat.outline, splatRadius)) {
+                if (!m_impl->zBuffer.SubmitAtom(zoomedX, zoomedY, depth, shaded.glyph, shaded.color,
+                    matId, mat.outline, splatRadius, false)) {
                     ++atomsCulledScreen;
                 }
             }
         }
-
+        // 4. Terreno y sombras 2.5D solo sobre las celdas vacias restantes (cero trabajo detras de objetos).
+        m_impl->SubmitGroundPlaneToZBuffer(zoom, atomsEvaluated);
         auto zbufEnd = Clock::now();
 
         // =========================================================================
@@ -584,10 +673,11 @@ namespace AsciiEngine {
         auto gpuStart = Clock::now();
 
         BeginDrawing();
-        // Fondo gris oscuro neutro (RGB 30, 32, 36).
-        ClearBackground({ 30, 32, 36, 255 });
 
-        // Volcado lineal O(W * H) del Z-Buffer con Zero Overdraw y siluetas O(1).
+        // Fondo modulado dinamicamente segun el ciclo Dia-Noche (gris claro -> atardecer -> noche).
+        const ColorRGBA& bg = m_impl->lightingSystem.GetSunState().backgroundColor;
+        ClearBackground({ bg.r, bg.g, bg.b, bg.a });
+
         ZBufferStats zStats = m_impl->zBuffer.FlushToScreen(
             &m_impl->renderFont,
             &m_impl->glyphLUT,
@@ -595,12 +685,10 @@ namespace AsciiEngine {
             m_impl->zBufferStyle
         );
 
-        // Overlays visuales (F4) sobre el viewport.
         m_impl->RenderDebugOverlays();
 
         auto gpuEnd = Clock::now();
 
-        // Actualizamos los contadores finales de telemetria para dibujarlos en el HUD (F3).
         auto& t = m_impl->telemetry;
         t.cullingTimeMs = ElapsedMs(cullStart, cullEnd);
         t.rasterZBufferMs = ElapsedMs(zbufStart, zbufEnd);
@@ -617,6 +705,8 @@ namespace AsciiEngine {
         t.zBufferBytes = m_impl->zBuffer.GetMemoryBytes();
         t.spatialGridBytes = m_impl->spatialGrid.GetMemoryBytes();
         t.bakedCloudBytes = m_impl->world.GetBakedMemoryBytes();
+        t.heightfieldBytes = m_impl->lightingSystem.GetHeightfieldBytes();
+        t.activePointLights = static_cast<uint32_t>(m_impl->lightingSystem.GetActiveLights().size());
         t.gridWidth = m_impl->zBuffer.GetGridWidth();
         t.gridHeight = m_impl->zBuffer.GetGridHeight();
 

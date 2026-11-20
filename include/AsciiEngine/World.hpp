@@ -1,13 +1,13 @@
 /**
  * @file World.hpp
- * @brief Definicion de Prefabs horneados (Flyweight), Instancias del mapa y Solver de Colisiones.
- *
+ * @brief Definicion de Prefabs horneados (Flyweight), Instancias, Config de iluminacion y Colisiones.
  * @details Mantiene desacoplados los datos geometricos (BakedPrefab) de su colocacion
  * espacial (MapInstance). 500 arboles identicos comparten una sola nube de puntos en RAM.
  */
 #pragma once
 
 #include <AsciiEngine/Types.hpp>
+#include <AsciiEngine/LightingSystem.hpp>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -29,15 +29,15 @@ namespace AsciiEngine {
     // Formas de colision 2D soportadas en el plano del suelo (X, Y).
     enum class ColliderType : uint8_t {
         NONE = 0,
-        CIRCLE = 1, // Troncos de arbol, rocas, columnas.
-        BOX = 2, // Muros solidos orientados (OBB con rotacion).
-        ARCH_PILLARS = 3  // Puerta con arco: dos pilares laterales solidos y paso central libre.
+        CIRCLE = 1,
+        BOX = 2,
+        ARCH_PILLARS = 3
     };
 
     // Parametros fisicos de colision leidos del JSON del objeto.
     struct ColliderDef {
         ColliderType type = ColliderType::NONE;
-        float        radius = 0.0f;            // Usado en CIRCLE.
+        float        radius = 0.0f;
         Vec2         halfSize = { 0.0f, 0.0f };  // Mitad de (ancho, profundidad) en BOX / ARCH_PILLARS.
         float        openingWidth = 0.0f;            // Ancho del hueco transitable en ARCH_PILLARS.
     };
@@ -67,10 +67,10 @@ namespace AsciiEngine {
         Vec3       position = {};
         Vec3       scale = { 1.0f, 1.0f, 1.0f };
         float      rotationDeg = 0.0f;
-        float      cosRot = 1.0f; // Precalculado: evita std::cos() por atomo cada frame.
-        float      sinRot = 0.0f; // Precalculado: evita std::sin() por atomo cada frame.
+        float      cosRot = 1.0f;
+        float      sinRot = 0.0f;
         PrefabId   prefabId = INVALID_PREFAB_ID;
-        MaterialId overrideMaterialId = FALLBACK_MATERIAL_ID; // 0 = usa materiales propios del prefab.
+        MaterialId overrideMaterialId = FALLBACK_MATERIAL_ID;
     };
 
     // Entidad fisica simple (en Fase 3 representa al jugador de prueba para validar colisiones).
@@ -103,17 +103,24 @@ namespace AsciiEngine {
         const std::vector<BakedPrefab>& GetPrefabs() const { return m_prefabs; }
         const std::vector<MapInstance>& GetInstances() const { return m_instances; }
 
-        Vec2  GetPlayerSpawn() const { return m_playerSpawn; }
-        float GetWorldHalfSize() const { return m_worldHalfSize; }
-        float GetChunkSize() const { return m_chunkSize; }
+        // Datos de iluminacion leidos del mapa JSON (entregados a LightingSystem).
+        const DayNightConfig& GetDayNightConfig() const { return m_dayNightConfig; }
+        const GlobalIlluminationConfig& GetGIConfig() const { return m_giConfig; }
+        const std::vector<PointLight>& GetMapLights() const { return m_mapLights; }
 
-        // Reporta el consumo real en bytes de todas las nubes horneadas (para el Debug HUD F3).
+        Vec2   GetPlayerSpawn() const { return m_playerSpawn; }
+        float  GetWorldHalfSize() const { return m_worldHalfSize; }
+        float  GetChunkSize() const { return m_chunkSize; }
         size_t GetBakedMemoryBytes() const;
 
     private:
         std::vector<BakedPrefab>                  m_prefabs;
         std::unordered_map<std::string, PrefabId> m_prefabNameToId;
         std::vector<MapInstance>                  m_instances;
+
+        DayNightConfig           m_dayNightConfig;
+        GlobalIlluminationConfig m_giConfig;
+        std::vector<PointLight>  m_mapLights;
 
         Vec2  m_playerSpawn = { 0.0f, 0.0f };
         float m_worldHalfSize = 140.0f;
@@ -132,7 +139,6 @@ namespace AsciiEngine {
             SpatialHashGrid& spatialGrid,
             std::vector<uint32_t>& scratchIds,
             std::vector<ChunkCoord>& scratchChunks);
-
-    } // namespace CollisionSolver
+    }
 
 } // namespace AsciiEngine

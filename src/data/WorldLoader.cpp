@@ -35,6 +35,34 @@ namespace AsciiEngine {
             return def;
         }
 
+        uint8_t HexNibble(char c) {
+            if (c >= '0' && c <= '9') return static_cast<uint8_t>(c - '0');
+            if (c >= 'a' && c <= 'f') return static_cast<uint8_t>(10 + (c - 'a'));
+            if (c >= 'A' && c <= 'F') return static_cast<uint8_t>(10 + (c - 'A'));
+            return 0;
+        }
+
+        ColorRGBA ReadColor(const json& obj, const char* key, ColorRGBA def) {
+            if (!obj.contains(key)) return def;
+            const auto& c = obj[key];
+            if (c.is_string()) {
+                std::string s = c.get<std::string>();
+                size_t off = (!s.empty() && s[0] == '#') ? 1 : 0;
+                if (s.size() >= off + 6) {
+                    return {
+                        static_cast<uint8_t>((HexNibble(s[off + 0]) << 4) | HexNibble(s[off + 1])),
+                        static_cast<uint8_t>((HexNibble(s[off + 2]) << 4) | HexNibble(s[off + 3])),
+                        static_cast<uint8_t>((HexNibble(s[off + 4]) << 4) | HexNibble(s[off + 5])),
+                        255
+                    };
+                }
+            }
+            else if (c.is_array() && c.size() >= 3) {
+                return { c[0].get<uint8_t>(), c[1].get<uint8_t>(), c[2].get<uint8_t>(), 255 };
+            }
+            return def;
+        }
+
         // Aplica jitter y densidad si el material usa GridMode::NOISY.
         // Retorna false si el punto es descartado por porosidad.
         bool ApplyMaterialGridNoise(Vec3& p, float step, const Material& mat, float seed) {
@@ -347,6 +375,7 @@ namespace AsciiEngine {
     }
 
     bool World::LoadMapFromFile(const std::string& mapPath, SpatialHashGrid& spatialGrid) {
+
         std::ifstream file(mapPath);
         if (!file.is_open()) {
             TraceLog(LOG_ERROR, "WORLD: No se pudo abrir el mapa %s", mapPath.c_str());
@@ -363,6 +392,9 @@ namespace AsciiEngine {
         }
 
         m_instances.clear();
+        m_mapLights.clear();
+        m_dayNightConfig = DayNightConfig{};
+        m_giConfig = GlobalIlluminationConfig{};
 
         if (root.contains("worldConfig")) {
             const auto& wc = root["worldConfig"];
@@ -373,6 +405,34 @@ namespace AsciiEngine {
             if (wc.contains("playerSpawn")) {
                 const auto& ps = wc["playerSpawn"];
                 m_playerSpawn = { ps.value("x", 0.0f), ps.value("y", 0.0f) };
+            }
+            if (wc.contains("dayNightCycle")) {
+                const auto& dn = wc["dayNightCycle"];
+                m_dayNightConfig.enabled = dn.value("enabled", true);
+                m_dayNightConfig.currentTimeHours = dn.value("currentTimeHours", 10.5f);
+                m_dayNightConfig.dayLengthSeconds = dn.value("dayLengthSeconds", 120.0f);
+            }
+            if (wc.contains("globalIllumination")) {
+                const auto& gi = wc["globalIllumination"];
+                m_giConfig.skyColor = ReadColor(gi, "skyColor", m_giConfig.skyColor);
+                m_giConfig.groundColor = ReadColor(gi, "groundColor", m_giConfig.groundColor);
+                m_giConfig.ambientStrength = gi.value("ambientStrength", 0.32f);
+            }
+        }
+
+        // Lectura de fuentes de luz estaticas / parpadeantes del mapa.
+        if (root.contains("lights") && root["lights"].is_array()) {
+            float phaseCounter = 0.0f;
+            for (const auto& l : root["lights"]) {
+                PointLight pl;
+                pl.position = ReadVec3(l, "pos", { 0.0f, 0.0f, 2.0f });
+                pl.color = ReadColor(l, "color", { 255, 160, 75, 255 });
+                pl.intensity = l.value("intensity", 1.2f);
+                pl.radius = l.value("radius", 10.0f);
+                pl.flicker = l.value("flicker", false);
+                pl.flickerPhase = phaseCounter * 2.13f;
+                phaseCounter += 1.0f;
+                m_mapLights.push_back(pl);
             }
         }
 
