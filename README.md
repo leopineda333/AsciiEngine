@@ -18,6 +18,10 @@
 [![CMake](https://img.shields.io/badge/CMake-3.20+-064F8C?style=for-the-badge&logo=cmake&logoColor=white)](https://cmake.org/)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20x64-0078D6?style=for-the-badge&logo=windows&logoColor=white)]()
 
+<img width="740" height="480" alt="image" src="https://github.com/user-attachments/assets/c6e0d4df-e4c3-4c93-9897-4dd926567706" /><img width="740" height="480" alt="image" src="https://github.com/user-attachments/assets/3998e189-d0a1-48fc-80e4-78400ed381af" />
+
+
+
 **[English](#english)** • **[Español](#español)**
 
 </div>
@@ -144,7 +148,7 @@ AsciiEngine/
 
 1. Clone the repository:
    ```bash
-   git clone [https://github.com/YOUR_USERNAME/AsciiEngine.git](https://github.com/YOUR_USERNAME/AsciiEngine.git)
+   git clone [https://github.com/leopineda333/AsciiEngine.git](https://github.com/leopineda333/AsciiEngine.git)
    ```
 2. Open **Visual Studio 2022** → **File → Open → Folder** and select the `AsciiEngine` root directory (or run `cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --config Release`).
 3. Select **`x64-Release`** (recommended for full 60 FPS performance) or `x64-Debug`.
@@ -272,7 +276,7 @@ Perfilado bajo escenario de estrés (Ventisca, 100% nieve, 582 instancias en map
 
 1. Clona el repositorio:
    ```bash
-   git clone [https://github.com/TU_USUARIO/AsciiEngine.git](https://github.com/TU_USUARIO/AsciiEngine.git)
+   git clone [https://github.com/leopineda333/AsciiEngine.git](https://github.com/leopineda333/AsciiEngine.git)
    ```
 2. Abre **Visual Studio 2022** → **Archivo → Abrir → Carpeta** y selecciona la raíz de `AsciiEngine` (o ejecuta `cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --config Release`).
 3. Selecciona **`x64-Release`** (recomendado para los 60 FPS completos) o `x64-Debug`.
