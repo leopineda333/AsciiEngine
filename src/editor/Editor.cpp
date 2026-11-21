@@ -1,6 +1,8 @@
+// Copyright (c) 2026 Leonardo Lopez Pineda
+// SPDX-License-Identifier: Zlib
 /**
  * @file Editor.cpp
- * @brief Implementacion del Editor Visual de Mapas con Raygui 4.0+, Ghost Preview y Undo/Redo.
+ * @brief Implementacion comentada linea por linea del Editor Visual Raygui, Undo/Redo y raycast isometrico.
  */
 #include <AsciiEngine/Editor.hpp>
 #include <AsciiEngine/MaterialSystem.hpp>
@@ -10,6 +12,8 @@
 
 #include "raylib.h"
 
+ // Raygui es header-only: definimos RAYGUI_IMPLEMENTATION una unica vez en todo el proyecto aqui,
+ // y silenciamos warnings de conversion estrecha propios de la libreria externa bajo /W4 en MSVC.
 #ifdef _MSC_VER
 #pragma warning(push)
 #pragma warning(disable: 4244 4267 4996)
@@ -28,11 +32,15 @@ namespace AsciiEngine {
 
     namespace {
 
+        // Dimensiones fijas de los 3 paneles acoplados al borde de la ventana.
         constexpr float LEFT_PANEL_W = 255.0f;
         constexpr float RIGHT_PANEL_W = 315.0f;
         constexpr float BOTTOM_BAR_H = 44.0f;
         constexpr float DEG_TO_RAD = 3.14159265358979323846f / 180.0f;
 
+        /**
+         * @brief Convierte un punto isometrico del mundo a coordenadas de pixel en la ventana.
+         */
         Vec2 IsoToScreen(Vec2 isoPt, const EditorContext& ctx) {
             return {
                 (isoPt.x - ctx.cameraTargetIso.x) * ctx.cameraZoom + ctx.cameraOffset.x,
@@ -40,6 +48,9 @@ namespace AsciiEngine {
             };
         }
 
+        /**
+         * @brief Inversa de IsoToScreen: convierte la posicion del raton en pixeles a espacio isometrico.
+         */
         Vec2 ScreenToIso(Vec2 scrPt, const EditorContext& ctx) {
             float invZoom = 1.0f / ctx.cameraZoom;
             return {
@@ -48,13 +59,17 @@ namespace AsciiEngine {
             };
         }
 
+        /**
+         * @brief Dibuja un circulo proyectado sobre el plano del suelo (Z = 0.05) para el ghost preview.
+         */
         void DrawIsoCircleScreen(Vec2 centerWorld, float radius, Color col, const EditorContext& ctx) {
-            constexpr int segs = 20;
+            constexpr int   segs = 20;
             constexpr float step = 6.2831853f / static_cast<float>(segs);
+
             Vec2 prev = IsoToScreen(MathIso::WorldToIso({ centerWorld.x + radius, centerWorld.y, 0.05f }, ctx.isoConfig), ctx);
             for (int i = 1; i <= segs; ++i) {
                 float a = static_cast<float>(i) * step;
-                Vec2 cur = IsoToScreen(MathIso::WorldToIso(
+                Vec2  cur = IsoToScreen(MathIso::WorldToIso(
                     { centerWorld.x + std::cos(a) * radius, centerWorld.y + std::sin(a) * radius, 0.05f },
                     ctx.isoConfig), ctx);
                 DrawLineEx({ prev.x, prev.y }, { cur.x, cur.y }, 1.8f, col);
@@ -62,16 +77,22 @@ namespace AsciiEngine {
             }
         }
 
+        /**
+         * @brief Dibuja un rectangulo rotado (OBB) sobre el plano del suelo para zonas, muros y arcos.
+         */
         void DrawIsoRectScreen(Vec2 center, Vec2 halfSize, float rotDeg, Color col, const EditorContext& ctx) {
             float rad = rotDeg * DEG_TO_RAD;
             float c = std::cos(rad);
             float s = std::sin(rad);
+
             const std::array<Vec2, 4> local = { {
                 { -halfSize.x, -halfSize.y },{ halfSize.x, -halfSize.y },
                 { halfSize.x,  halfSize.y },{ -halfSize.x,  halfSize.y }
             } };
+
             std::array<Vec2, 4> scr;
             for (size_t i = 0; i < 4; ++i) {
+                // Rotacion 2D estandar: (x*cos - y*sin, x*sin + y*cos).
                 float wx = center.x + (local[i].x * c - local[i].y * s);
                 float wy = center.y + (local[i].x * s + local[i].y * c);
                 scr[i] = IsoToScreen(MathIso::WorldToIso({ wx, wy, 0.05f }, ctx.isoConfig), ctx);
@@ -81,7 +102,9 @@ namespace AsciiEngine {
             }
         }
 
-        // Configura un tema oscuro sobrio de Raygui acorde a la estetica terminal del motor.
+        /**
+         * @brief Configura el tema oscuro minimalista de Raygui (formato hexadecimal 0xRRGGBBAA).
+         */
         void ApplyDarkTerminalTheme(const Font& font) {
             GuiLoadStyleDefault();
             GuiSetFont(font);
@@ -115,6 +138,7 @@ namespace AsciiEngine {
     bool Editor::IsPointerOverUI(int screenWidth, int screenHeight) const {
         if (!m_enabled) return false;
         Vector2 mp = GetMousePosition();
+        // Comprobamos los 3 rectangulos fijos: panel izquierdo, panel derecho y barra inferior.
         if (mp.x <= LEFT_PANEL_W) return true;
         if (mp.x >= static_cast<float>(screenWidth) - RIGHT_PANEL_W) return true;
         if (mp.y >= static_cast<float>(screenHeight) - BOTTOM_BAR_H) return true;
@@ -123,8 +147,9 @@ namespace AsciiEngine {
 
     void Editor::PushCommand(EditorCommand cmd) {
         m_undoStack.push_back(std::move(cmd));
+        // Toda accion nueva invalida la rama futura de Redo (comportamiento estandar de editores).
         m_redoStack.clear();
-        // Limitamos la pila a 100 acciones recientes para mantener uso de memoria acotado.
+        // Tope de 100 comandos para evitar crecimiento ilimitado de RAM en sesiones largas de diseno.
         if (m_undoStack.size() > 100) {
             m_undoStack.erase(m_undoStack.begin());
         }
@@ -138,6 +163,7 @@ namespace AsciiEngine {
         EditorCommand cmd = m_undoStack.back();
         m_undoStack.pop_back();
 
+        // Ejecutamos la operacion inversa exacta a cada CommandType y solicitamos rebuild si toca geometria.
         switch (cmd.type) {
         case CommandType::ADD_INSTANCE:
             ctx.world.RemoveInstance(cmd.index, ctx.spatialGrid);
@@ -203,6 +229,7 @@ namespace AsciiEngine {
         }
         }
 
+        // Trasladamos el comando deshecho a la pila Redo para poder reaplicarlo con Ctrl+Y.
         m_redoStack.push_back(std::move(cmd));
         ShowToast("Undo aplicado", 1.5f);
     }
@@ -215,6 +242,7 @@ namespace AsciiEngine {
         EditorCommand cmd = m_redoStack.back();
         m_redoStack.pop_back();
 
+        // Reaplicamos la operacion original exacta.
         switch (cmd.type) {
         case CommandType::ADD_INSTANCE:
             ctx.world.InsertInstanceAt(cmd.index, cmd.afterInst, ctx.spatialGrid);
@@ -287,6 +315,7 @@ namespace AsciiEngine {
     void Editor::Update(float dt, EditorContext& ctx) {
         if (!m_enabled) return;
 
+        // Cuenta regresiva del mensaje temporal en barra inferior.
         if (m_toastTimer > 0.0f) {
             m_toastTimer = std::max(0.0f, m_toastTimer - dt);
         }
@@ -315,7 +344,8 @@ namespace AsciiEngine {
         }
         if (IsKeyPressed(KEY_K)) m_gridSnap = !m_gridSnap;
 
-        // 2. Movimiento libre de camara en el editor (WASD o arrastrar con boton central).
+        // 2. Navegacion libre de camara: WASD (velocidad escalada por 1/zoom para sentirse uniforme)
+        //    o arrastre directo con el boton central del raton.
         const float panSpeed = (shiftDown ? 780.0f : 440.0f) / ctx.cameraZoom;
         if (!ctrlDown) {
             if (IsKeyDown(KEY_W)) ctx.cameraTargetIso.y -= panSpeed * dt;
@@ -325,7 +355,7 @@ namespace AsciiEngine {
         }
 
         Vector2 mp = GetMousePosition();
-        bool overUI = IsPointerOverUI(ctx.screenWidth, ctx.screenHeight);
+        bool    overUI = IsPointerOverUI(ctx.screenWidth, ctx.screenHeight);
 
         if (!overUI && IsMouseButtonPressed(MOUSE_BUTTON_MIDDLE)) {
             m_draggingPan = true;
@@ -342,7 +372,7 @@ namespace AsciiEngine {
             m_lastMouseScreen = { mp.x, mp.y };
         }
 
-        // 3. Rotacion (Q/E) y Escala (Shift + Rueda o [ / ]) del pincel activo.
+        // 3. Rotacion rapida del pincel (Q/E en incrementos de 15 deg) y Escala (Shift + Rueda) o Zoom.
         if (IsKeyPressed(KEY_Q)) m_brushRotationDeg = std::fmod(m_brushRotationDeg - 15.0f + 360.0f, 360.0f);
         if (IsKeyPressed(KEY_E)) m_brushRotationDeg = std::fmod(m_brushRotationDeg + 15.0f, 360.0f);
 
@@ -356,7 +386,7 @@ namespace AsciiEngine {
             }
         }
 
-        // 4. Raycast inverso Mouse -> Suelo (Z = 0) con Grid Snap opcional.
+        // 4. Raycast inverso Mouse (px) -> Espacio Isometrico -> Plano del Suelo (Z = 0) + Grid Snap.
         Vec2 worldPos = MathIso::IsoToWorldGround(ScreenToIso({ mp.x, mp.y }, ctx), ctx.isoConfig);
         if (m_gridSnap) {
             worldPos.x = std::round(worldPos.x / m_gridSnapStep) * m_gridSnapStep;
@@ -365,13 +395,16 @@ namespace AsciiEngine {
         float limit = ctx.world.GetWorldHalfSize() - 1.0f;
         m_cursorWorldPos = { MathIso::Clamp(worldPos.x, -limit, limit), MathIso::Clamp(worldPos.y, -limit, limit) };
 
+        // Solo procesamos clics de colocacion/borrado cuando el cursor esta en el viewport libre.
         if (!overUI) {
             HandleViewportInteraction(ctx);
         }
     }
 
     void Editor::HandleViewportInteraction(EditorContext& ctx) {
-        // --- CLIC IZQUIERDO: COLOCAR O SELECCIONAR ---
+        // =========================================================================
+        // CLIC IZQUIERDO: COLOCAR ELEMENTO ACTIVO O SELECCIONAR INSTANCIA
+        // =========================================================================
         if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
             if (m_category == EditorCategory::OBJECTS) {
                 const auto& prefabs = ctx.world.GetPrefabs();
@@ -418,10 +451,10 @@ namespace AsciiEngine {
                 pl.flickerPhase = static_cast<float>(ctx.lighting.GetMapLights().size()) * 1.9f;
 
                 if (m_selectedLightPres == 0) {
-                    pl.color = { 255, 152, 56, 255 }; pl.intensity = 1.65f; pl.radius = 11.5f; pl.flicker = true;
+                    pl.color = { 255, 152, 56, 255 };  pl.intensity = 1.65f; pl.radius = 11.5f; pl.flicker = true;
                 }
                 else if (m_selectedLightPres == 1) {
-                    pl.color = { 96, 210, 255, 255 }; pl.intensity = 1.45f; pl.radius = 12.0f; pl.flicker = true;
+                    pl.color = { 96, 210, 255, 255 };  pl.intensity = 1.45f; pl.radius = 12.0f; pl.flicker = true;
                 }
                 else {
                     pl.color = { 155, 255, 130, 255 }; pl.intensity = 1.25f; pl.radius = 10.0f; pl.flicker = false;
@@ -481,7 +514,7 @@ namespace AsciiEngine {
                 }
             }
             else if (m_category == EditorCategory::SELECT) {
-                // Buscamos la instancia de objeto mas cercana al cursor (dentro de 3.2 unidades).
+                // Busqueda lineal de la instancia mas cercana dentro de un radio de 3.2 unidades.
                 const auto& instances = ctx.world.GetInstances();
                 int   bestIdx = -1;
                 float bestDist = 3.2f * 3.2f;
@@ -496,14 +529,16 @@ namespace AsciiEngine {
                 }
                 m_selectedInstanceIdx = bestIdx;
                 if (bestIdx >= 0) {
-                    m_rightTab = 1; // Cambiamos al inspector de seleccion automaticamente.
+                    m_rightTab = 1; // Abre automaticamente la pestana Inspector -> Seleccion.
                 }
             }
         }
 
-        // --- CLIC DERECHO: BORRAR ELEMENTO MAS CERCANO AL CURSOR ---
+        // =========================================================================
+        // CLIC DERECHO: ELIMINAR ELEMENTO MAS CERCANO AL CURSOR (CON UNDO)
+        // =========================================================================
         if (IsMouseButtonPressed(MOUSE_BUTTON_RIGHT)) {
-            // Prioridad 1: Luces cercanas (< 2.5u).
+            // Prioridad 1: Luces cercanas (< 2.5u) si estamos en pestana Luces o Seleccion.
             auto& lights = ctx.lighting.GetMutableMapLights();
             int bestL = -1; float bestLD = 2.5f * 2.5f;
             for (size_t i = 0; i < lights.size(); ++i) {
@@ -523,7 +558,7 @@ namespace AsciiEngine {
                 return;
             }
 
-            // Prioridad 2: Personajes cercanos (< 2.5u) si estamos en pestana Personajes.
+            // Prioridad 2: Personajes cercanos (< 2.8u) si estamos en pestana Personajes.
             if (m_category == EditorCategory::CHARACTERS) {
                 const auto& chars = ctx.characters.GetInstances();
                 int bestC = -1; float bestCD = 2.8f * 2.8f;
@@ -544,7 +579,7 @@ namespace AsciiEngine {
                 }
             }
 
-            // Prioridad 3: Zonas de agua/superficie bajo el cursor si estamos en pestana Zonas.
+            // Prioridad 3: Zonas bajo el cursor (primero superficies transitables, luego agua).
             if (m_category == EditorCategory::ZONES) {
                 auto& surfs = ctx.world.GetMutableSurfaceZones();
                 for (int i = static_cast<int>(surfs.size()) - 1; i >= 0; --i) {
@@ -576,7 +611,7 @@ namespace AsciiEngine {
                 }
             }
 
-            // Prioridad 4: Instancia de objeto mas cercana al cursor (< 3.0u).
+            // Prioridad 4: Instancia de objeto mas cercana (< 3.0u).
             const auto& instances = ctx.world.GetInstances();
             int   bestI = -1;
             float bestID = 3.0f * 3.0f;
@@ -601,7 +636,7 @@ namespace AsciiEngine {
     }
 
     void Editor::DrawGhostPreview(const EditorContext& ctx) const {
-        // Resaltado dorado sobre la instancia seleccionada actualmente.
+        // 1. Halo dorado alrededor de la instancia seleccionada actualmente (si existe).
         if (m_selectedInstanceIdx >= 0 && m_selectedInstanceIdx < static_cast<int>(ctx.world.GetInstances().size())) {
             const MapInstance& sel = ctx.world.GetInstances()[m_selectedInstanceIdx];
             const BakedPrefab* p = ctx.world.GetPrefab(sel.prefabId);
@@ -609,14 +644,13 @@ namespace AsciiEngine {
             DrawIsoCircleScreen({ sel.position.x, sel.position.y }, rad, GOLD, ctx);
         }
 
+        // No dibujamos preview en el escenario mientras el cursor esta encima de los paneles UI.
         if (IsPointerOverUI(ctx.screenWidth, ctx.screenHeight)) return;
 
-        // Ghost preview en el cursor segun la herramienta activa.
-        Vec2 centerScr = IsoToScreen(MathIso::WorldToIso({ m_cursorWorldPos.x, m_cursorWorldPos.y, 0.1f }, ctx.isoConfig), ctx);
-
-        // Flecha de orientacion segun m_brushRotationDeg.
+        // 2. Proyectamos el punto del cursor y su flecha de orientacion (m_brushRotationDeg).
+        Vec2  centerScr = IsoToScreen(MathIso::WorldToIso({ m_cursorWorldPos.x, m_cursorWorldPos.y, 0.1f }, ctx.isoConfig), ctx);
         float rad = m_brushRotationDeg * DEG_TO_RAD;
-        Vec2 dirScr = IsoToScreen(MathIso::WorldToIso({
+        Vec2  dirScr = IsoToScreen(MathIso::WorldToIso({
             m_cursorWorldPos.x + std::cos(rad) * 2.2f,
             m_cursorWorldPos.y + std::sin(rad) * 2.2f,
             0.1f
@@ -665,13 +699,14 @@ namespace AsciiEngine {
     void Editor::Render(EditorContext& ctx, const void* raylibFontPtr) {
         if (!m_enabled || !raylibFontPtr) return;
 
+        // Inicializamos el estilo visual de Raygui la primera vez que se abre el editor.
         const Font& font = *static_cast<const Font*>(raylibFontPtr);
         if (!m_styleInit) {
             ApplyDarkTerminalTheme(font);
             m_styleInit = true;
         }
 
-        // 1. Primero el ghost preview en el viewport isométrico.
+        // 1. Ghost preview en el viewport (dibujado debajo de los paneles UI).
         DrawGhostPreview(ctx);
 
         const float sw = static_cast<float>(ctx.screenWidth);
@@ -679,16 +714,15 @@ namespace AsciiEngine {
         const float bodyH = sh - BOTTOM_BAR_H;
 
         // =========================================================================
-        // 2. PANEL IZQUIERDO: NAVEGADOR DE TEMPLATES Y HERRAMIENTAS
+        // 2. PANEL IZQUIERDO: NAVEGADOR DE PLANTILLAS Y PROPIEDADES DEL PINCEL
         // =========================================================================
         GuiPanel({ 0.0f, 0.0f, LEFT_PANEL_W, bodyH }, "EDITOR DE MAPAS [F1]");
 
-        float lx = 10.0f;
-        float ly = 32.0f;
+        float       lx = 10.0f;
+        float       ly = 32.0f;
         const float lw = LEFT_PANEL_W - 20.0f;
+        float       halfW = (lw - 4.0f) * 0.5f;
 
-        // Pestanas de categorias (2 filas compactas de botones).
-        float halfW = (lw - 4.0f) * 0.5f;
         if (GuiButton({ lx, ly, halfW, 24.0f }, m_category == EditorCategory::OBJECTS ? "> Objetos" : "Objetos"))
             m_category = EditorCategory::OBJECTS;
         if (GuiButton({ lx + halfW + 4.0f, ly, halfW, 24.0f }, m_category == EditorCategory::CHARACTERS ? "> Personajes" : "Personajes"))
@@ -711,9 +745,7 @@ namespace AsciiEngine {
             const auto& prefabs = ctx.world.GetPrefabs();
             for (int i = 0; i < static_cast<int>(prefabs.size()); ++i) {
                 std::string label = (i == m_selectedPrefabIdx ? "[*] " : "    ") + prefabs[i].name;
-                if (GuiButton({ lx, ly, lw, 26.0f }, label.c_str())) {
-                    m_selectedPrefabIdx = i;
-                }
+                if (GuiButton({ lx, ly, lw, 26.0f }, label.c_str())) m_selectedPrefabIdx = i;
                 ly += 30.0f;
             }
         }
@@ -721,14 +753,14 @@ namespace AsciiEngine {
             const auto& tpls = ctx.characters.GetTemplates();
             for (int i = 0; i < static_cast<int>(tpls.size()); ++i) {
                 std::string label = (i == m_selectedCharIdx ? "[*] " : "    ") + tpls[i].name;
-                if (GuiButton({ lx, ly, lw, 26.0f }, label.c_str())) {
-                    m_selectedCharIdx = i;
-                }
+                if (GuiButton({ lx, ly, lw, 26.0f }, label.c_str())) m_selectedCharIdx = i;
                 ly += 30.0f;
             }
         }
         else if (m_category == EditorCategory::LIGHTS) {
-            static constexpr const char* kLights[3] = { "Antorcha Calida (Flicker)", "Cristal Cian (Flicker)", "Orbe Esmeralda (Fijo)" };
+            static constexpr const char* kLights[3] = {
+                "Antorcha Calida (Flicker)", "Cristal Cian (Flicker)", "Orbe Esmeralda (Fijo)"
+            };
             for (int i = 0; i < 3; ++i) {
                 std::string label = std::string(i == m_selectedLightPres ? "[*] " : "    ") + kLights[i];
                 if (GuiButton({ lx, ly, lw, 26.0f }, label.c_str())) m_selectedLightPres = i;
@@ -757,7 +789,7 @@ namespace AsciiEngine {
             GuiLabel({ lx, ly, lw, 20.0f }, "Clic Der: Eliminar cercano");   ly += 22.0f;
         }
 
-        // Controles del pincel en la mitad inferior del panel izquierdo.
+        // Controles del pincel anclados a la parte inferior del panel izquierdo.
         float brushY = std::max(ly + 12.0f, bodyH - 220.0f);
         GuiLine({ lx, brushY, lw, 10.0f }, "Pincel & Ayudas"); brushY += 18.0f;
 
@@ -769,7 +801,7 @@ namespace AsciiEngine {
         GuiLabel({ lx, brushY, lw, 18.0f }, TextFormat("Escala [Shift+Rueda]: %.2fx", m_brushScale)); brushY += 18.0f;
         GuiSliderBar({ lx, brushY, lw, 16.0f }, "", "", &m_brushScale, 0.4f, 2.5f); brushY += 26.0f;
 
-        // Material Override para objetos colocados.
+        // Selector ciclico de material override (0 = conserva el material propio del prefab).
         std::string ovName = (m_brushOverrideMat == FALLBACK_MATERIAL_ID)
             ? "Original"
             : ctx.materials.Get(m_brushOverrideMat).name;
@@ -780,17 +812,17 @@ namespace AsciiEngine {
         GuiLabel({ lx, brushY, lw, 18.0f }, TextFormat("Cursor: (%.1f, %.1f)", m_cursorWorldPos.x, m_cursorWorldPos.y));
 
         // =========================================================================
-        // 3. PANEL DERECHO: INSPECTOR DE MUNDO Y SELECCION
+        // 3. PANEL DERECHO: INSPECTOR DE MUNDO Y DE INSTANCIA SELECCIONADA
         // =========================================================================
         const float rx = sw - RIGHT_PANEL_W;
         GuiPanel({ rx, 0.0f, RIGHT_PANEL_W, bodyH }, "INSPECTOR");
 
-        float ix = rx + 12.0f;
-        float iy = 32.0f;
+        float       ix = rx + 12.0f;
+        float       iy = 32.0f;
         const float iw = RIGHT_PANEL_W - 24.0f;
-        float tabW = (iw - 4.0f) * 0.5f;
+        float       tabW = (iw - 4.0f) * 0.5f;
 
-        if (GuiButton({ ix, iy, tabW, 24.0f }, m_rightTab == 0 ? "> Mundo" : "Mundo"))       m_rightTab = 0;
+        if (GuiButton({ ix, iy, tabW, 24.0f }, m_rightTab == 0 ? "> Mundo" : "Mundo"))             m_rightTab = 0;
         if (GuiButton({ ix + tabW + 4.0f, iy, tabW, 24.0f }, m_rightTab == 1 ? "> Seleccion" : "Seleccion")) m_rightTab = 1;
         iy += 32.0f;
 
@@ -839,8 +871,8 @@ namespace AsciiEngine {
             iy += 28.0f;
 
             float wBtn = (iw - 8.0f) / 3.0f;
-            if (GuiButton({ ix, iy, wBtn, 24.0f }, "Sol"))      ctx.weather.TransitionToWeather("clear_day");
-            if (GuiButton({ ix + wBtn + 4.0f, iy, wBtn, 24.0f }, "Lluvia"))   ctx.weather.TransitionToWeather("heavy_rain");
+            if (GuiButton({ ix, iy, wBtn, 24.0f }, "Sol"))                             ctx.weather.TransitionToWeather("clear_day");
+            if (GuiButton({ ix + wBtn + 4.0f, iy, wBtn, 24.0f }, "Lluvia"))            ctx.weather.TransitionToWeather("heavy_rain");
             if (GuiButton({ ix + (wBtn + 4.0f) * 2.0f, iy, wBtn, 24.0f }, "Ventisca")) ctx.weather.TransitionToWeather("blizzard");
             iy += 28.0f;
 
@@ -883,18 +915,18 @@ namespace AsciiEngine {
                 GuiLabel({ ix, iy, iw, 22.0f }, "Usa pestana [Selec.] y clic izq.");
             }
             else {
-                const size_t idx = static_cast<size_t>(m_selectedInstanceIdx);
-                MapInstance before = ctx.world.GetInstances()[idx];
+                const size_t       idx = static_cast<size_t>(m_selectedInstanceIdx);
+                MapInstance        before = ctx.world.GetInstances()[idx];
                 const BakedPrefab* prefab = ctx.world.GetPrefab(before.prefabId);
 
                 GuiLabel({ ix, iy, iw, 20.0f }, TextFormat("Objeto #%zu: %s", idx, prefab ? prefab->name.c_str() : "?"));
                 iy += 26.0f;
 
-                Vec3  newPos = before.position;
-                float newRot = before.rotationDeg;
-                float newScl = before.scale.x;
+                Vec3       newPos = before.position;
+                float      newRot = before.rotationDeg;
+                float      newScl = before.scale.x;
                 MaterialId newOv = before.overrideMaterialId;
-                bool changed = false;
+                bool       changed = false;
 
                 GuiLabel({ ix, iy, iw, 18.0f }, TextFormat("Pos X: %.2f", newPos.x)); iy += 18.0f;
                 if (GuiButton({ ix, iy, 60.0f, 22.0f }, "-0.5")) { newPos.x -= 0.5f; changed = true; }
@@ -949,14 +981,13 @@ namespace AsciiEngine {
         }
 
         // =========================================================================
-        // 4. BARRA INFERIOR: GUARDAR / CARGAR / HOT-RELOAD / UNDO-REDO / TOAST
+        // 4. BARRA INFERIOR: GUARDAR / CARGAR / HOT-RELOAD / UNDO-REDO / ESTADO
         // =========================================================================
         const float by = sh - BOTTOM_BAR_H;
+        const float btnY = by + 8.0f;
         GuiPanel({ 0.0f, by, sw, BOTTOM_BAR_H }, nullptr);
 
         float bx = 12.0f;
-        const float btnY = by + 8.0f;
-
         if (GuiButton({ bx, btnY, 130.0f, 28.0f }, "Guardar JSON [Ctrl+S]")) {
             WorldWindConfig wc = {
                 ctx.weather.GetWindDirectionDeg(),

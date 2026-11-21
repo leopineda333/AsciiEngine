@@ -1,9 +1,15 @@
+// Copyright (c) 2026 Leonardo Lopez Pineda
+// SPDX-License-Identifier: Zlib
 /**
  * @file CollisionSolver.cpp
- * @brief Integracion fisica semi-implicita y resolucion de colisiones 2D (Circulo, OBB y Arcos).
+ * @brief Implementacion comentada linea por linea de la fisica semi-implicita y colisiones 2D.
  *
- * @complexity O(K) donde K es el numero de instancias en los chunks adyacentes al actor.
- * Cero asignaciones dinamicas en memoria por frame.
+ * @details Caracteristicas clave:
+ *   - Integracion de Euler semi-implicita (actualiza velocidad primero y luego posicion con la nueva
+ *     velocidad): mas estable energeticamente que Euler explicito ante variaciones de dt.
+ *   - Deslizamiento tangencial suave: al chocar en diagonal contra un muro o tronco, proyectamos
+ *     la velocidad sobre la tangente para que el actor resbale fluidamente sin pegarse.
+ *   - Consulta O(1) al SpatialHashGrid con buffers pre-alojados: cero asignaciones en el heap.
  */
 #include <AsciiEngine/World.hpp>
 #include <AsciiEngine/MathIso.hpp>
@@ -16,8 +22,16 @@ namespace AsciiEngine::CollisionSolver {
 
     namespace {
 
-        // Elimina la componente de velocidad que apunta hacia dentro del obstaculo
-        // para lograr deslizamiento tangencial suave sin rebotes artificiales.
+        /**
+         * @brief Cancela la componente de velocidad que apunta hacia dentro del obstaculo.
+         *
+         * @details Matematica de proyeccion vectorial:
+         *   Sea 'n' la normal unitaria que apunta HACIA AFUERA del obstaculo.
+         *   El producto punto vn = Dot(v, n) mide cuanto se mueve el actor en direccion a 'n'.
+         *   - Si vn >= 0: el actor ya se esta alejando del obstaculo -> no tocamos la velocidad.
+         *   - Si vn <  0: el actor intenta penetrar el obstaculo -> restamos (n * vn), dejando
+         *     intacta la componente tangencial para que se deslice paralelo a la pared.
+         */
         void RemoveInwardVelocity(Vec2& velocity, Vec2 pushNormal) {
             float vn = velocity.x * pushNormal.x + velocity.y * pushNormal.y;
             if (vn < 0.0f) {
@@ -26,33 +40,49 @@ namespace AsciiEngine::CollisionSolver {
             }
         }
 
-        // Resolucion exacta Circulo vs Circulo (troncos, rocas).
+        /**
+         * @brief Resolucion exacta Circulo (actor) vs Circulo (tronco, roca, columna).
+         * @complexity O(1).
+         */
         void ResolveCircleVsCircle(SimpleActor& actor, Vec2 center, float obsRadius) {
+            // Vector desde el centro del obstaculo hacia el centro del actor.
             float dx = actor.position.x - center.x;
             float dy = actor.position.y - center.y;
             float minDist = actor.collisionRadius + obsRadius;
             float distSq = dx * dx + dy * dy;
 
+            // Descarte rapido sin sqrt si no hay superposicion.
             if (distSq < minDist * minDist) {
                 float dist = std::sqrt(distSq);
+                // Si ambos centros coinciden exactamente (dist ~ 0), empujamos en +X por seguridad.
                 Vec2 normal = (dist > 1e-5f) ? Vec2{ dx / dist, dy / dist } : Vec2{ 1.0f, 0.0f };
                 float overlap = minDist - dist;
 
+                // Separacion posicional exacta + proyeccion tangencial de velocidad.
                 actor.position.x += normal.x * overlap;
                 actor.position.y += normal.y * overlap;
                 RemoveInwardVelocity(actor.velocity, normal);
             }
         }
 
-        // Resolucion exacta Circulo vs Caja Rotada (OBB) usando cos/sin precalculados de la instancia.
+        /**
+         * @brief Resolucion exacta Circulo (actor) vs Caja Rotada / OBB (muros, pilares de arcos).
+         *
+         * @details En vez de resolver geometria rotada directamente en espacio del mundo, aplicamos
+         * un cambio de base al espacio local de la caja (donde es un AABB alineado a ejes):
+         *   1. Trasladamos por -boxCenter y rotamos por -theta usando cosRot/sinRot precalculados.
+         *   2. Encontramos el punto mas cercano dentro de [-hx..hx, -hy..hy] con dos Clamp().
+         *   3. Si hay colision, rotamos la normal de empuje de vuelta por +theta al espacio del mundo.
+         * @complexity O(1) — cero llamadas a sin() o cos().
+         */
         void ResolveCircleVsOBB(SimpleActor& actor, Vec2 boxCenter, Vec2 halfSize, float cosRot, float sinRot) {
-            // 1. Trasladamos y rotamos al espacio local de la caja (rotacion inversa: -theta).
+            // 1. Transformacion Mundo -> Espacio Local del OBB (rotacion inversa: -theta).
             float rx = actor.position.x - boxCenter.x;
             float ry = actor.position.y - boxCenter.y;
             float localX = rx * cosRot + ry * sinRot;
             float localY = -rx * sinRot + ry * cosRot;
 
-            // 2. Buscamos el punto mas cercano dentro del rectangulo local [-hx..hx, -hy..hy].
+            // 2. Punto mas cercano sobre/dentro del rectangulo local al centro del circulo.
             float closestX = MathIso::Clamp(localX, -halfSize.x, halfSize.x);
             float closestY = MathIso::Clamp(localY, -halfSize.y, halfSize.y);
 
@@ -62,15 +92,17 @@ namespace AsciiEngine::CollisionSolver {
 
             if (distSq < actor.collisionRadius * actor.collisionRadius) {
                 float dist = std::sqrt(distSq);
-                Vec2 localNormal = { 0.0f, 1.0f };
+                Vec2  localNormal = { 0.0f, 1.0f };
                 float overlap = 0.0f;
 
                 if (dist > 1e-5f) {
+                    // Caso comun: el centro del actor sigue fuera del OBB, solo toca con su radio.
                     localNormal = { diffX / dist, diffY / dist };
                     overlap = actor.collisionRadius - dist;
                 }
                 else {
-                    // Si el centro del actor penetro el interior del OBB, expulsamos por la cara mas cercana.
+                    // Caso extremo: el centro del actor penetro dentro del OBB (ej. spawn encima).
+                    // Lo expulsamos por el eje que requiera el desplazamiento minimo (MTV).
                     float penX = halfSize.x - std::abs(localX);
                     float penY = halfSize.y - std::abs(localY);
                     if (penX < penY) {
@@ -83,7 +115,7 @@ namespace AsciiEngine::CollisionSolver {
                     }
                 }
 
-                // 3. Devolvemos la normal de empuje al espacio del mundo (rotacion directa: +theta).
+                // 3. Transformacion Espacio Local -> Mundo (rotacion directa: +theta).
                 Vec2 worldNormal = {
                     localNormal.x * cosRot - localNormal.y * sinRot,
                     localNormal.x * sinRot + localNormal.y * cosRot
@@ -104,12 +136,14 @@ namespace AsciiEngine::CollisionSolver {
         SpatialHashGrid& spatialGrid,
         std::vector<uint32_t>& scratchIds,
         std::vector<ChunkCoord>& scratchChunks) {
-        // Limitamos dt por seguridad si el usuario arrastra la ventana en Windows.
+        // Limitamos dt a 50 ms (20 FPS minimos simulados): evita "tunneling" (atravesar muros)
+        // si el sistema operativo pausa el hilo al arrastrar o redimensionar la ventana.
         float safeDt = std::min(dt, 0.05f);
 
-        // 1. Integracion de Euler semi-implicito (aceleracion + friccion exponencial suave).
+        // 1. Integracion de Euler semi-implicito: aceleracion por entrada + orientacion suave.
         float inputLenSq = desiredWorldDir.x * desiredWorldDir.x + desiredWorldDir.y * desiredWorldDir.y;
         if (inputLenSq > 1e-5f) {
+            // Normalizamos la direccion deseada para que caminar en diagonal no sea sqrt(2) veces mas rapido.
             float invLen = 1.0f / std::sqrt(inputLenSq);
             float dirX = desiredWorldDir.x * invLen;
             float dirY = desiredWorldDir.y * invLen;
@@ -117,21 +151,21 @@ namespace AsciiEngine::CollisionSolver {
             actor.velocity.x += dirX * actor.acceleration * safeDt;
             actor.velocity.y += dirY * actor.acceleration * safeDt;
 
-            // Orientacion suave hacia la direccion de movimiento.
+            // Interpolacion angular por el camino mas corto [-PI, +PI] hacia la direccion de marcha.
             float targetAngle = std::atan2(dirY, dirX);
             float diff = targetAngle - actor.facingAngleRad;
             while (diff < -3.14159265f) diff += 6.2831853f;
             while (diff > 3.14159265f) diff -= 6.2831853f;
             actor.facingAngleRad += diff * MathIso::Clamp(12.0f * safeDt, 0.0f, 1.0f);
         }
-
-        // Aplicamos amortiguamiento (friccion de suelo) y limite de velocidad maxima.
-        float damping = std::max(0.0f, 1.0f - actor.friction * safeDt);
-        if (inputLenSq <= 1e-5f) {
+        else {
+            // Sin entrada direccional: aplicamos amortiguamiento (friccion del suelo; menor en nieve).
+            float damping = std::max(0.0f, 1.0f - actor.friction * safeDt);
             actor.velocity.x *= damping;
             actor.velocity.y *= damping;
         }
 
+        // Acotamos la magnitud de velocidad al maximo permitido (walkSpeed o runSpeed).
         float speedSq = actor.velocity.x * actor.velocity.x + actor.velocity.y * actor.velocity.y;
         if (speedSq > actor.moveSpeed * actor.moveSpeed) {
             float invSpeed = actor.moveSpeed / std::sqrt(speedSq);
@@ -139,11 +173,11 @@ namespace AsciiEngine::CollisionSolver {
             actor.velocity.y *= invSpeed;
         }
 
-        // Avanzamos posicion con la nueva velocidad.
+        // Avanzamos la posicion utilizando la velocidad recien integrada.
         actor.position.x += actor.velocity.x * safeDt;
         actor.position.y += actor.velocity.y * safeDt;
 
-        // 2. Consulta O(1) al SpatialHashGrid: solo evaluamos chunks que toca el actor.
+        // 2. Consulta espacial O(1): solo inspeccionamos los chunks inmediatamente cercanos al actor.
         float queryMargin = actor.collisionRadius + 1.5f;
         float invChunk = 1.0f / spatialGrid.GetChunkSize();
         ChunkRange range = {
@@ -155,12 +189,14 @@ namespace AsciiEngine::CollisionSolver {
 
         spatialGrid.QueryChunks(range, scratchIds, scratchChunks);
 
-        // 3. Resolucion iterativa (2 pasadas evitan atascos en esquinas formadas por dos objetos).
+        // 3. Resolucion iterativa en 2 pasadas:
+        //    Cuando el actor choca contra una esquina formada por dos objetos, la pasada 1 puede
+        //    empujarlo ligeramente dentro del segundo objeto; la pasada 2 estabiliza la posicion final.
         const auto& instances = world.GetInstances();
         const float limit = world.GetWorldHalfSize() - actor.collisionRadius;
 
         for (int iter = 0; iter < 2; ++iter) {
-            // Limites perimetrales del mundo.
+            // Mantenemos al actor dentro del perimetro del mundo.
             actor.position.x = MathIso::Clamp(actor.position.x, -limit, limit);
             actor.position.y = MathIso::Clamp(actor.position.y, -limit, limit);
 
@@ -181,14 +217,15 @@ namespace AsciiEngine::CollisionSolver {
                     ResolveCircleVsOBB(actor, center2D, scaledHalf, inst.cosRot, inst.sinRot);
                 }
                 else if (col.type == ColliderType::ARCH_PILLARS) {
-                    // Descomponemos el arco en 2 pilares OBB laterales, dejando el paso central libre.
+                    // Descomponemos el portico en 2 pilares OBB laterales separados por openingWidth:
+                    //   |<-- pillarW -->|<--- openingWidth --->|<-- pillarW -->|
+                    // El eje X local rotado del arco viene dado por el vector unitario (cosRot, sinRot).
                     float totalW = (col.halfSize.x * 2.0f) * inst.scale.x;
                     float openW = col.openingWidth * inst.scale.x;
                     float pillarW = std::max(0.2f, (totalW - openW) * 0.5f);
                     float offsetDist = (openW * 0.5f) + (pillarW * 0.5f);
                     Vec2  pillarHalf = { pillarW * 0.5f, col.halfSize.y * inst.scale.y };
 
-                    // Eje X local rotado del arco.
                     Vec2 leftCenter = { center2D.x - inst.cosRot * offsetDist, center2D.y - inst.sinRot * offsetDist };
                     Vec2 rightCenter = { center2D.x + inst.cosRot * offsetDist, center2D.y + inst.sinRot * offsetDist };
 

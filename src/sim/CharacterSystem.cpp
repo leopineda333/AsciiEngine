@@ -1,14 +1,17 @@
+// Copyright (c) 2026 Leonardo Lopez Pineda
+// SPDX-License-Identifier: Zlib
 /**
  * @file CharacterSystem.cpp
- * @brief Implementacion del horneado modular de personajes, jerarquia 3D y animacion procedural.
+ * @brief Implementacion comentada linea por linea del horneado de personajes, ordenamiento topologico,
+ *        cinematica directa 3x3 y animacion procedural.
  */
 #include <AsciiEngine/CharacterSystem.hpp>
 #include <AsciiEngine/MaterialSystem.hpp>
 #include <AsciiEngine/LightingSystem.hpp>
 #include <AsciiEngine/AsciiZBuffer.hpp>
 #include <AsciiEngine/CullingSystem.hpp>
-#include "json.hpp"
-#include "raylib.h" // Solo para TraceLog en diagnosticos.
+#include "json.hpp" // Dependencia privada: nunca se expone en headers publicos.
+#include "raylib.h" // Solo para TraceLog() en diagnosticos de carga.
 
 #include <algorithm>
 #include <cmath>
@@ -24,6 +27,9 @@ namespace AsciiEngine {
 
         constexpr float DEG_TO_RAD = 3.14159265358979323846f / 180.0f;
 
+        /**
+         * @brief Lee un Vec3 flexible desde JSON (acepta arreglo [x, y, z] u objeto {"x", "y", "z"}).
+         */
         Vec3 ReadVec3(const json& obj, const char* key, Vec3 def = { 0.0f, 0.0f, 0.0f }) {
             if (!obj.contains(key)) return def;
             const auto& v = obj[key];
@@ -36,6 +42,9 @@ namespace AsciiEngine {
             return def;
         }
 
+        /**
+         * @brief Traduce el texto de eje en JSON ("X", "Y", "Z") a AnimAxis.
+         */
         AnimAxis ParseAxis(std::string_view s) {
             if (s == "X" || s == "x") return AnimAxis::X;
             if (s == "Y" || s == "y") return AnimAxis::Y;
@@ -53,7 +62,13 @@ namespace AsciiEngine {
             }
         }
 
-        // --- Utilidades matematicas ligeras de Matriz 3x3 para jerarquias articuladas ---
+        // =========================================================================
+        // ALGEBRA DE MATRICES DE ROTACION 3x3 (ROW-MAJOR) PARA JERARQUIAS ARTICULADAS
+        // =========================================================================
+        // Layout en memoria:
+        //   [ m[0] m[1] m[2] ]   <- Fila 0 (proyeccion sobre eje X)
+        //   [ m[3] m[4] m[5] ]   <- Fila 1 (proyeccion sobre eje Y)
+        //   [ m[6] m[7] m[8] ]   <- Fila 2 (proyeccion sobre eje Z)
 
         void SetIdentity(float m[9]) {
             m[0] = 1.0f; m[1] = 0.0f; m[2] = 0.0f;
@@ -61,6 +76,9 @@ namespace AsciiEngine {
             m[6] = 0.0f; m[7] = 0.0f; m[8] = 1.0f;
         }
 
+        /**
+         * @brief Construye una matriz de rotacion elemental alrededor del eje X, Y o Z (regla de mano derecha).
+         */
         void MakeAxisRotation(AnimAxis axis, float rad, float out[9]) {
             SetIdentity(out);
             if (axis == AnimAxis::NONE || std::abs(rad) < 1e-5f) return;
@@ -68,19 +86,25 @@ namespace AsciiEngine {
             float c = std::cos(rad);
             float s = std::sin(rad);
             if (axis == AnimAxis::X) {
+                // Rotacion en el plano YZ (X permanece fijo).
                 out[4] = c; out[5] = -s;
                 out[7] = s; out[8] = c;
             }
             else if (axis == AnimAxis::Y) {
+                // Rotacion en el plano XZ (Y permanece fijo -> balanceo de piernas/brazos adelante-atras).
                 out[0] = c; out[2] = s;
                 out[6] = -s; out[8] = c;
             }
             else if (axis == AnimAxis::Z) {
+                // Rotacion en el plano XY (Z permanece fijo -> giro yaw del personaje o helices).
                 out[0] = c; out[1] = -s;
                 out[3] = s; out[4] = c;
             }
         }
 
+        /**
+         * @brief Compone dos rotaciones: out = a * b (aplica primero 'b' local y luego 'a' del padre).
+         */
         void MulMat3(const float a[9], const float b[9], float out[9]) {
             for (int r = 0; r < 3; ++r) {
                 for (int c = 0; c < 3; ++c) {
@@ -91,6 +115,11 @@ namespace AsciiEngine {
             }
         }
 
+        /**
+         * @brief Transforma un vector 3D (posicion local o normal) por una matriz de rotacion 3x3.
+         * @details Como toda matriz de rotacion es ortogonal (det = +1), sirve directamente para rotar
+         *          normales sin necesidad de calcular matriz inversa-transpuesta.
+         */
         inline Vec3 MulMat3Vec(const float m[9], Vec3 v) {
             return {
                 m[0] * v.x + m[1] * v.y + m[2] * v.z,
@@ -99,10 +128,13 @@ namespace AsciiEngine {
             };
         }
 
-        // Aplica jitter/densidad del material si esta en modo NOISY.
+        /**
+         * @brief Aplica porosidad y perturbacion organica si el material de la seccion es GridMode::NOISY (ej. pelaje).
+         */
         bool ApplySectionNoise(Vec3& p, float step, const Material& mat, float seed) {
             if (mat.gridMode != GridMode::NOISY) return true;
             if (MathIso::Hash3D(p.x, p.y, p.z, seed + 11.7f) > mat.density) return false;
+
             float jAmp = mat.jitter * step * 1.5f;
             p.x += (MathIso::Hash3D(p.x, p.y, p.z, seed + 1.3f) - 0.5f) * jAmp;
             p.y += (MathIso::Hash3D(p.x, p.y, p.z, seed + 2.7f) - 0.5f) * jAmp;
@@ -110,9 +142,15 @@ namespace AsciiEngine {
             return true;
         }
 
-        // Hornea la geometria SDF de una seccion del personaje centrada respecto a su pivotOffset.
-        // Nota: las primitivas se hornean centradas en (0,0,0) + pivotOffset para que las articulaciones
-        // (ej. caderas, hombros, alas) roten naturalmente desde el punto de union.
+        /**
+         * @brief Hornea la cascara exterior SDF de una seccion del personaje desplazada por su pivotOffset.
+         *
+         * @details Diferencia crucial entre localOffset y pivotOffset:
+         *   - localOffset: donde se ubica la ARTICULACION (ej. cadera u hombro) respecto al padre.
+         *   - pivotOffset: donde se ubica el CENTRO GEOMETRICO de la pieza respecto a esa articulacion.
+         *     Ejemplo: una pierna de altura 0.88u con pivotOffset.z = -0.44u cuelga hacia abajo
+         *     desde la cadera (0,0,0), logrando que rote como un pendulo desde arriba en vez de por la mitad.
+         */
         void BakeSectionGeometry(BakedCharacterSection& sec, const json& secJson,
             const MaterialSystem& materials, float seed) {
             const std::string shape = secJson.value("shape", "BOX");
@@ -123,6 +161,7 @@ namespace AsciiEngine {
 
             auto pushAtom = [&](Vec3 p, Vec3 n, float ao) {
                 BakedAtom a;
+                // Aplicamos pivotOffset al hornear: ahorra una suma por atomo en cada frame de Render().
                 a.localPos = { p.x + pivotOff.x, p.y + pivotOff.y, p.z + pivotOff.z };
                 a.localNormal = MathIso::Normalize(n);
                 a.ao = MathIso::Clamp(ao, 0.30f, 1.0f);
@@ -130,6 +169,7 @@ namespace AsciiEngine {
                 sec.atoms.push_back(a);
                 };
 
+            // Semi-dimensiones acotadas al menos a medio paso para que piezas delgadas nunca salgan vacias.
             const float hx = std::max(size.x * 0.5f, step * 0.5f);
             const float hy = std::max(size.y * 0.5f, step * 0.5f);
             const float hz = std::max(size.z * 0.5f, step * 0.5f);
@@ -142,6 +182,7 @@ namespace AsciiEngine {
                             Vec3 p = { x, y, z };
                             if (!ApplySectionNoise(p, step, mat, seed)) continue;
                             float m = MathIso::EllipsoidMetric(p, radii);
+                            // Cascara hueca [0.42 .. 1.0]: descarta atomos internos invisibles.
                             if (m > 1.0f || m < 0.42f) continue;
 
                             Vec3 norm = MathIso::EllipsoidNormal(p, radii);
@@ -176,7 +217,7 @@ namespace AsciiEngine {
             }
             else if (shape == "CONE") {
                 for (float z = -hz; z <= hz; z += step) {
-                    float t = (z + hz) / std::max(size.z, 0.01f); // 0 en base -> 1 en punta.
+                    float t = (z + hz) / std::max(size.z, 0.01f); // 0 en la base -> 1 en el vertice.
                     float curRx = std::max(0.03f, hx * (1.0f - t));
                     float curRy = std::max(0.03f, hy * (1.0f - t));
                     for (float y = -curRy; y <= curRy; y += step) {
@@ -200,6 +241,7 @@ namespace AsciiEngine {
                         const bool isYFace = (std::abs(y) >= hy - step * 0.95f);
                         for (float x = -hx; x <= hx; x += step) {
                             const bool isXFace = (std::abs(x) >= hx - step * 0.95f);
+                            // Solo conservamos las 6 caras externas de la caja.
                             if (!isXFace && !isYFace && !isZFace) continue;
 
                             Vec3 p = { x, y, z };
@@ -217,17 +259,20 @@ namespace AsciiEngine {
                 }
             }
 
-            // Garantiza al menos 1 atomo incluso en piezas diminutas (ej. ojos o antenas).
+            // Salvaguarda para micro-piezas (ej. ojos, sensores): garantiza al menos 1 atomo visible.
             if (sec.atoms.empty()) {
                 pushAtom({ 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 1.0f }, 1.0f);
             }
             sec.atoms.shrink_to_fit();
         }
 
+        /**
+         * @brief Parsea una pista de animacion procedural desde el bloque "animTracks" de una seccion.
+         */
         AnimTrack ParseAnimTrack(const json& tJson) {
             AnimTrack tr;
             tr.active = true;
-            // Soportamos tanto el formato corto ("axis"/"amplitude") como traslacion + rotacion simultaneas.
+            // Soportamos tanto notacion corta ("axis"/"amplitude") como traslacion y rotacion combinadas.
             tr.posAxis = ParseAxis(tJson.value("posAxis", tJson.value("axis", "")));
             tr.posAmplitude = tJson.value("posAmplitude", tJson.value("amplitude", 0.0f));
             tr.rotAxis = ParseAxis(tJson.value("rotAxis", ""));
@@ -241,7 +286,8 @@ namespace AsciiEngine {
     } // namespace anonimo
 
     CharacterSystem::CharacterSystem() {
-        // Pre-reservamos espacio para hasta 64 secciones por personaje: cero asignaciones en Render().
+        // Pre-reservamos 64 ranuras en el scratch de poses: suficiente para criaturas complejas
+        // con cero llamadas a malloc/new durante el bucle de renderizado.
         m_poseScratch.reserve(64);
     }
 
@@ -272,7 +318,7 @@ namespace AsciiEngine {
 
                 if (!root.contains("sections") || !root["sections"].is_array()) continue;
 
-                // 1. Leemos todas las secciones crudas y guardamos su parentId temporal para ordenar topologicamente.
+                // 1. Leemos y horneamos todas las secciones en un arreglo temporal, conservando parentId.
                 struct RawSection {
                     BakedCharacterSection baked;
                     std::string           parentId;
@@ -302,8 +348,11 @@ namespace AsciiEngine {
                     rawList.push_back(std::move(rs));
                 }
 
-                // 2. Ordenamiento topologico (Kahn simplificado): garantiza parentIdx < propio indice siempre.
-                // Permite definir las secciones en cualquier orden en el JSON y evaluarlas sin recursion en O(S).
+                // 2. Ordenamiento topologico (variante simple de Kahn):
+                //    Colocamos primero las raices (parentId vacio) y en pasadas sucesivas los hijos
+                //    cuyo padre ya quedo ubicado en placedMap. Esto permite escribir las secciones en
+                //    CUALQUIER orden en el JSON y garantiza que al recorrer tpl.sections[0..N-1],
+                //    el padre siempre haya sido evaluado antes que cualquiera de sus hijos.
                 std::unordered_map<std::string, int16_t> placedMap;
                 bool progress = true;
                 while (tpl.sections.size() < rawList.size() && progress) {
@@ -314,7 +363,7 @@ namespace AsciiEngine {
                         int16_t pIdx = -1;
                         if (!rs.parentId.empty()) {
                             auto it = placedMap.find(rs.parentId);
-                            if (it == placedMap.end()) continue; // Esperamos a que su padre sea colocado.
+                            if (it == placedMap.end()) continue; // El padre aun no entra; esperar siguiente vuelta.
                             pIdx = it->second;
                         }
 
@@ -327,7 +376,7 @@ namespace AsciiEngine {
                     }
                 }
 
-                // Si hubo alguna seccion huerfana por parentId mal escrito, la adjuntamos a raiz con aviso.
+                // Respaldo defensivo: si un JSON tiene un parentId inexistente o ciclo, adjuntamos a raiz sin crashear.
                 for (RawSection& rs : rawList) {
                     if (!rs.placed) {
                         TraceLog(LOG_WARNING, "CHARACTERS: Seccion '%s' en '%s' tiene parentId invalido '%s'.",
@@ -337,7 +386,7 @@ namespace AsciiEngine {
                     }
                 }
 
-                // 3. Estimamos radios envolventes para Frustum Culling 2D.
+                // 3. Calculamos radios envolventes (XY y altura Z) en pose de reposo para Frustum Culling 2D.
                 std::vector<Vec3> restPos(tpl.sections.size(), { 0.0f, 0.0f, 0.0f });
                 for (size_t i = 0; i < tpl.sections.size(); ++i) {
                     const auto& s = tpl.sections[i];
@@ -403,6 +452,7 @@ namespace AsciiEngine {
         inst.wanderRadius = wanderRadius;
         inst.aiWaitTimer = 0.8f;
 
+        // Solo un personaje puede tener isPlayer == true a la vez.
         if (isPlayer) {
             for (auto& existing : m_instances) existing.isPlayer = false;
             m_controlledIdx = m_instances.size();
@@ -414,6 +464,7 @@ namespace AsciiEngine {
 
     void CharacterSystem::TriggerPlayerAttack() {
         if (m_controlledIdx < m_instances.size()) {
+            // Reiniciamos animTime = 0 para que la curva de golpe comience siempre desde el inicio.
             m_instances[m_controlledIdx].attackTimer = 0.48f;
             m_instances[m_controlledIdx].animTime = 0.0f;
         }
@@ -422,6 +473,7 @@ namespace AsciiEngine {
     void CharacterSystem::CycleControlledCharacter() {
         if (m_instances.size() <= 1) return;
 
+        // El personaje anterior pasa a NPC patrullando alrededor del lugar donde lo dejamos.
         m_instances[m_controlledIdx].isPlayer = false;
         m_instances[m_controlledIdx].homePos = m_instances[m_controlledIdx].actor.position;
 
@@ -442,17 +494,19 @@ namespace AsciiEngine {
             bool isRunning = false;
 
             if (inst.isPlayer) {
+                // --- PERSONAJE CONTROLADO POR EL JUGADOR ---
                 desiredDir = playerDesiredWorldDir;
                 isRunning = playerSprint;
                 inst.actor.moveSpeed = isRunning ? tpl.runSpeed : tpl.walkSpeed;
             }
             else if (inst.wanderRadius > 0.5f) {
-                // IA sencilla de deambulacion alrededor de homePos para ver a las demas criaturas cobrar vida.
+                // --- IA SIMPLE DE DEAMBULACION PARA NPCs ---
                 float dx = inst.wanderTarget.x - inst.actor.position.x;
                 float dy = inst.wanderTarget.y - inst.actor.position.y;
                 float distSq = dx * dx + dy * dy;
 
                 if (distSq < 0.8f) {
+                    // Llego a su destino: espera un tiempo aleatorio antes de elegir un nuevo punto.
                     inst.aiWaitTimer -= safeDt;
                     if (inst.aiWaitTimer <= 0.0f) {
                         std::uniform_real_distribution<float> angleDist(0.0f, 6.2831853f);
@@ -464,7 +518,7 @@ namespace AsciiEngine {
                         float candX = inst.homePos.x + std::cos(a) * r;
                         float candY = inst.homePos.y + std::sin(a) * r;
 
-                        // Evitamos enviar NPCs terrestres hacia el centro de un lago.
+                        // Criaturas voladoras (baseElevationZ > 0.3) pueden sobrevolar agua; las terrestres la evitan.
                         if (tpl.baseElevationZ > 0.3f || !world.FindWaterZoneAt(candX, candY)) {
                             inst.wanderTarget = { candX, candY };
                         }
@@ -472,19 +526,21 @@ namespace AsciiEngine {
                     }
                 }
                 else {
+                    // Camina pausadamente (55% de walkSpeed) hacia su objetivo.
                     desiredDir = { dx, dy };
                     inst.actor.moveSpeed = tpl.walkSpeed * 0.55f;
                 }
             }
 
+            // Las entidades voladoras conservan friccion aerea constante; las terrestres heredan friccion de nieve/suelo.
             inst.actor.friction = (tpl.baseElevationZ > 0.3f) ? 6.0f : groundFriction;
 
-            // Fisica y resolucion de colisiones contra arboles, rocas y arcos del mapa.
+            // 1. Integracion fisica semi-implicita y resolucion de colisiones contra el escenario.
             CollisionSolver::UpdateActorPhysics(
                 inst.actor, desiredDir, safeDt, world, spatialGrid, scratchIds, scratchChunks
             );
 
-            // Maquina de estados de animacion segun velocidad actual y temporizador de accion.
+            // 2. Maquina de estados de animacion con prioridad: ATTACK > RUN > WALK > IDLE.
             float speedSq = inst.actor.velocity.x * inst.actor.velocity.x + inst.actor.velocity.y * inst.actor.velocity.y;
             if (inst.attackTimer > 0.0f) {
                 inst.attackTimer -= safeDt;
@@ -500,7 +556,7 @@ namespace AsciiEngine {
                 inst.animState = AnimState::IDLE;
             }
 
-            // Avanzamos el reloj de animacion (mas rapido al correr para acompanar las zancadas).
+            // 3. Reloj de fase de animacion (acelerado 1.35x al correr para sincronizar cadencia de zancadas).
             float animSpeedMul = (inst.animState == AnimState::RUN) ? 1.35f : 1.0f;
             inst.animTime += safeDt * animSpeedMul;
             if (inst.animTime > 628.3185f) inst.animTime -= 628.3185f;
@@ -521,29 +577,33 @@ namespace AsciiEngine {
             if (inst.templateId >= m_templates.size()) continue;
             const CharacterTemplate& tpl = m_templates[inst.templateId];
 
-            // Frustum Culling 2D del personaje completo.
-            Vec3 rootWorldPos = { inst.actor.position.x, inst.actor.position.y, tpl.baseElevationZ };
-            Vec2 baseIso = MathIso::WorldToIso(rootWorldPos, isoConfig);
+            // 1. Frustum Culling 2D (Capa 2): descartamos personajes fuera de pantalla antes de evaluar huesos.
+            Vec3  rootWorldPos = { inst.actor.position.x, inst.actor.position.y, tpl.baseElevationZ };
+            Vec2  baseIso = MathIso::WorldToIso(rootWorldPos, isoConfig);
             float baseScrX = baseIso.x * zoom - camTopLeftX;
             float baseScrY = baseIso.y * zoom - camTopLeftY;
 
-            float radX = tpl.boundRadiusXY * inst.scale * isoConfig.tileWidthHalf * zoom;
-            float hgt = tpl.boundHeightZ * inst.scale * isoConfig.scaleZ * zoom;
+            float  radX = tpl.boundRadiusXY * inst.scale * isoConfig.tileWidthHalf * zoom;
+            float  hgt = tpl.boundHeightZ * inst.scale * isoConfig.scaleZ * zoom;
             Rect2D charRect = { baseScrX - radX, baseScrY - hgt, radX * 2.0f, hgt + radX };
             if (!viewportRect.Intersects(charRect)) continue;
 
-            // Rotacion raiz del personaje en el plano XY (eje Z).
+            // Matriz raiz del personaje orientada segun su angulo de marcha en el plano XY (eje Z).
             float rootRot[9];
             MakeAxisRotation(AnimAxis::Z, inst.actor.facingAngleRad, rootRot);
 
-            // 1. Evaluacion jerarquica O(S) en orden topologico usando el buffer scratch sin heap.
+            // =========================================================================
+            // 2. CINEMATICA DIRECTA (FORWARD KINEMATICS) LINEAL EN O(S) SIN RECURSION
+            // =========================================================================
+            // Gracias al ordenamiento topologico hecho al cargar, m_poseScratch[sec.parentIdx]
+            // ya contiene la posicion y rotacion mundial exacta del padre cuando evaluamos al hijo.
             const size_t secCount = tpl.sections.size();
             m_poseScratch.resize(secCount);
 
             for (size_t s = 0; s < secCount; ++s) {
                 const BakedCharacterSection& sec = tpl.sections[s];
 
-                // Seleccionamos la pista del estado activo (con respaldo en WALK o IDLE si no se definio).
+                // Cadena de respaldo de pistas: estado actual -> WALK (si estamos en RUN) -> IDLE.
                 const AnimTrack* tr = &sec.tracks[static_cast<size_t>(inst.animState)];
                 if (!tr->active && inst.animState == AnimState::RUN) {
                     tr = &sec.tracks[static_cast<size_t>(AnimState::WALK)];
@@ -552,7 +612,7 @@ namespace AsciiEngine {
                     tr = &sec.tracks[static_cast<size_t>(AnimState::IDLE)];
                 }
 
-                // Calculamos desplazamiento y rotacion local procedural.
+                // Desplazamiento y rotacion local respecto al pivote del padre.
                 Vec3 localPos = {
                     sec.localOffset.x * inst.scale,
                     sec.localOffset.y * inst.scale,
@@ -565,6 +625,7 @@ namespace AsciiEngine {
                     float phase = inst.animTime * tr->frequency + tr->phaseOffset;
                     float wave = std::sin(phase);
 
+                    // Traslacion armonica local (ej. respiracion del torso o levitacion del dron).
                     if (tr->posAxis != AnimAxis::NONE && std::abs(tr->posAmplitude) > 1e-5f) {
                         float delta = wave * tr->posAmplitude * inst.scale;
                         if (tr->posAxis == AnimAxis::X) localPos.x += delta;
@@ -572,12 +633,16 @@ namespace AsciiEngine {
                         else if (tr->posAxis == AnimAxis::Z) localPos.z += delta;
                     }
 
+                    // Rotacion armonica pendular o giro continuo (ej. piernas, cola, helices).
                     if (tr->rotAxis != AnimAxis::NONE) {
                         float angle = tr->spinContinuous ? phase : (wave * tr->rotAmpRad);
                         MakeAxisRotation(tr->rotAxis, angle, localRot);
                     }
                 }
 
+                // Componemos la transformacion jerarquica:
+                //   WorldPos_hijo = WorldPos_padre + (WorldRot_padre * localPos_hijo)
+                //   WorldRot_hijo = WorldRot_padre * localRot_hijo
                 SectionWorldPose& pose = m_poseScratch[s];
                 if (sec.parentIdx >= 0) {
                     const SectionWorldPose& parent = m_poseScratch[static_cast<size_t>(sec.parentIdx)];
@@ -600,7 +665,9 @@ namespace AsciiEngine {
                 }
             }
 
-            // 2. Proyeccion, iluminacion y reflejo en agua de todos los atomos de cada seccion.
+            // =========================================================================
+            // 3. PROYECCION, SOMBREADO Y REFLEJO EN AGUA DE CADA SECCION
+            // =========================================================================
             const bool nearWater = allowReflections &&
                 world.IsNearAnyWater(inst.actor.position.x, inst.actor.position.y, tpl.boundHeightZ * 2.0f + 2.0f);
             size_t refCounter = 0;
@@ -611,12 +678,13 @@ namespace AsciiEngine {
                 const Material& mat = materials.Get(sec.materialId);
 
                 const BakedAtom* atoms = sec.atoms.data();
-                const size_t atomCount = sec.atoms.size();
+                const size_t     atomCount = sec.atoms.size();
 
                 for (size_t i = 0; i < atomCount; ++i) {
                     const BakedAtom& a = atoms[i];
                     ++atomsEvaluated;
 
+                    // Transformamos el atomo desde el espacio de la seccion al espacio mundial 3D.
                     Vec3 scaledLocal = { a.localPos.x * inst.scale, a.localPos.y * inst.scale, a.localPos.z * inst.scale };
                     Vec3 rotOffset = MulMat3Vec(pose.rot, scaledLocal);
                     Vec3 worldPt = {
@@ -625,10 +693,11 @@ namespace AsciiEngine {
                         pose.position.z + rotOffset.z
                     };
 
-                    Vec2 isoPt = MathIso::WorldToIso(worldPt, isoConfig);
+                    Vec2  isoPt = MathIso::WorldToIso(worldPt, isoConfig);
                     float zoomedX = isoPt.x * zoom;
                     float zoomedY = isoPt.y * zoom;
 
+                    // Pre-check rapido de Capa 3 (16 px de holgura para no recortar contornos en bordes).
                     float scrX = zoomedX - camTopLeftX;
                     float scrY = zoomedY - camTopLeftY;
                     if (scrX < -16.0f || scrX >= screenW + 16.0f || scrY < -16.0f || scrY >= screenH + 16.0f) {
@@ -636,7 +705,8 @@ namespace AsciiEngine {
                         continue;
                     }
 
-                    Vec3 worldNorm = MathIso::Normalize(MulMat3Vec(pose.rot, a.localNormal));
+                    // Rotamos la normal por pose.rot para que cada extremidad reaccione dinamicamente al Sol/antorcha.
+                    Vec3       worldNorm = MathIso::Normalize(MulMat3Vec(pose.rot, a.localNormal));
                     ShadedAtom shaded = lighting.ShadeAtom(worldPt, worldNorm, a.ao, materials, sec.materialId, true);
 
                     float depth = MathIso::ComputeDepthKey(worldPt);
@@ -645,12 +715,14 @@ namespace AsciiEngine {
                         ++atomsCulled;
                     }
 
-                    // Reflejo en agua si el personaje pasa junto a la orilla (submuestreo 50%).
+                    // Reflejo espejado en agua (submuestreo 50%: uno de cada dos atomos).
                     if (nearWater && worldPt.z > 0.12f && ((refCounter++ & 1) == 0)) {
+                        // Invertimos Z (* -0.80f) para proyectar la silueta de cabeza dentro del lago y aplicamos onda.
                         Vec2 refIso = MathIso::WorldToIso({ worldPt.x, worldPt.y, -worldPt.z * 0.80f }, isoConfig);
                         refIso.x += std::sin(refIso.y * 0.22f + windTime * 3.8f + worldPt.x * 0.6f) * 2.4f;
 
                         Vec2 refGround = MathIso::IsoToWorldGround(refIso, isoConfig);
+                        // Si hay un puente transitable sobre el agua en ese punto, el puente oculta el reflejo.
                         const SurfaceZone* sz = world.FindSurfaceZoneAt(refGround.x, refGround.y);
                         if (!sz || !sz->walkableOverWater) {
                             if (const WaterZone* wz = world.FindWaterZoneAt(refGround.x, refGround.y)) {
@@ -659,6 +731,7 @@ namespace AsciiEngine {
                                 refCol.g = static_cast<uint8_t>(refCol.g * 0.85f);
                                 refCol.b = static_cast<uint8_t>(refCol.b * 0.92f);
 
+                                // Depth -0.10f: gana sobre la superficie del agua (-0.15f) pero queda detras de objetos (>=0).
                                 float depthRef = MathIso::ComputeDepthKey({ refGround.x, refGround.y, 0.0f }) - 0.10f;
                                 zBuffer.SubmitAtom(refIso.x * zoom, refIso.y * zoom, depthRef,
                                     shaded.glyph, refCol, FALLBACK_MATERIAL_ID, false, 0, true);
@@ -701,6 +774,8 @@ namespace AsciiEngine {
     bool CharacterSystem::RemoveCharacter(size_t index) {
         if (index >= m_instances.size()) return false;
         m_instances.erase(m_instances.begin() + static_cast<ptrdiff_t>(index));
+
+        // Mantenemos siempre un indice de control valido si aun quedan personajes en el mapa.
         if (m_instances.empty()) {
             m_controlledIdx = 0;
         }
@@ -714,6 +789,7 @@ namespace AsciiEngine {
     }
 
     std::vector<EntitySpawnDef> CharacterSystem::ExportEntitySpawns() const {
+        // Convierte las instancias vivas actuales al formato serializable del bloque "entities" en JSON.
         std::vector<EntitySpawnDef> out;
         out.reserve(m_instances.size());
 

@@ -1,58 +1,106 @@
+// Copyright (c) 2026 Leonardo Lopez Pineda
+// SPDX-License-Identifier: Zlib
 /**
  * @file Engine.hpp
- * @brief Fachada publica (Facade) del motor AsciiEngine.
+ * @brief Fachada publica (Facade + PIMPL) del motor AsciiEngine.
  *
- * @details Usa el patron Pimpl (Pointer to Implementation) para ocultar completamente
- * los tipos internos de Raylib (Font, Rectangle, Camera2D) al proyecto consumidor.
+ * @details Este es el UNICO header que necesita incluir un juego o aplicacion cliente para
+ * utilizar el motor completo. Al aplicar el idioma PIMPL (Pointer to Implementation) mediante
+ * std::unique_ptr<Impl>, ocultamos por completo raylib.h, raygui.h, nlohmann/json y windows.h:
+ *   - Tiempos de compilacion minimos en proyectos clientes.
+ *   - Cero colisiones de macros o simbolos con otras librerias del usuario.
+ *   - Encapsulamiento estricto: cualquier cambio interno en el pipeline no rompe el ABI publico.
  */
 #pragma once
 
-#include <memory>
+#include <memory> // std::unique_ptr para la propiedad exclusiva de Context::Impl.
 #include <string>
 
 namespace AsciiEngine {
 
+    /**
+     * @brief Instancia principal del motor que administra ciclo de vida, escena, simulacion y renderizado.
+     */
     class Context {
     public:
+        /**
+         * @brief Reserva el estado interno (Impl) sin abrir aun la ventana grafica.
+         */
         Context();
+
+        /**
+         * @brief Destructor definido en Engine.cpp (requisito de std::unique_ptr con tipo incompleto Impl).
+         * @details Garantiza el cierre limpio de recursos graficos llamando a Shutdown() automaticamente (RAII).
+         */
         ~Context();
 
-        // Deshabilitamos copia para proteger la propiedad unica del contexto grafico.
+        // Un contexto de motor posee recursos unicos de GPU/ventana: prohibimos copias accidentales.
         Context(const Context&) = delete;
         Context& operator=(const Context&) = delete;
 
-        // Inicializa ventana, atlas tipografico con LUT O(1) y subsistemas base.
+        /**
+         * @brief Inicializa la ventana grafica, carga la tipografia + LUT O(1) y dimensiona el AsciiZBuffer.
+         * @param width  Ancho inicial de la ventana en pixeles.
+         * @param height Alto inicial de la ventana en pixeles.
+         * @param title  Titulo mostrado en la barra de la ventana.
+         * @return true si el contexto OpenGL/Raylib quedo listo para operar.
+         */
         bool Initialize(int width, int height, const char* title);
 
-        // Carga los archivos de datos JSON (en Fase 1: materials.json).
+        /**
+         * @brief Carga y hornea todas las plantillas data-driven desde la raiz de datos (ej. "assets/data").
+         * @details Escanea automaticamente: materials/, objects/, characters/, biomes/, weather/ y particles/.
+         *          Soporta invocacion repetida en caliente (Hot-Reload con F5).
+         */
         bool LoadRegistry(const std::string& dataRoot);
 
-        // Carga las instancias del mapa JSON y construye el SpatialHashGrid.
+        /**
+         * @brief Carga un mapa JSON, construye el SpatialHashGrid, la GroundMask O(1) y el Heightfield 2.5D.
+         */
         bool LoadMap(const std::string& mapPath);
 
-        // Guarda el mapa desde el editor a un JSON
+        /**
+         * @brief Serializa el estado completo actual del escenario (instancias, luces, zonas, entidades, clima) a JSON.
+         */
         bool SaveMap(const std::string& mapPath) const;
 
-        // Utilidades del editor de mapas
+        /**
+         * @brief Alterna entre el Modo Juego y el Editor Visual de Mapas embebido (tecla [F1]).
+         */
         void ToggleEditorMode();
+
+        /**
+         * @brief Alterna la visibilidad del panel de telemetria en tiempo real (tecla [F3]).
+         */
         void ToggleDebugHUD();
 
-        // Indica si la ventana sigue abierta.
+        /**
+         * @brief Indica si el motor sigue activo (inicializado y sin solicitud de cierre de ventana).
+         */
         bool IsRunning() const;
 
-        // Tiempo transcurrido del ultimo frame en segundos (Delta Time).
+        /**
+         * @brief Devuelve el tiempo transcurrido del ultimo frame en segundos (delta time).
+         */
         float GetFrameTime() const;
 
-        // Actualiza controles interactivos de prueba y simulacion.
+        /**
+         * @brief Ejecuta las Etapas 1 a 4 del pipeline: entrada, fisica, IA, animacion, clima, iluminacion y particulas.
+         */
         void Update(float dt);
 
-        // Ejecuta el renderizado de la escena activa.
+        /**
+         * @brief Ejecuta las Etapas 5 a 8 del pipeline: Culling 3 capas, Z-Buffer World-Locked, Batch GPU, Overlays y UI.
+         */
         void Render() const;
 
-        // Libera fuentes, memoria y cierra Raylib.
+        /**
+         * @brief Libera la fuente en VRAM y cierra la ventana grafica de forma idempotente (seguro llamarlo varias veces).
+         */
         void Shutdown();
 
     private:
+        // Declaracion adelantada del estado interno privado (definido exclusivamente en src/core/Engine.cpp).
         struct Impl;
         std::unique_ptr<Impl> m_impl;
     };

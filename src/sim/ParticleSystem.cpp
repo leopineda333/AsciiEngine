@@ -1,11 +1,13 @@
+// Copyright (c) 2026 Leonardo Lopez Pineda
+// SPDX-License-Identifier: Zlib
 /**
  * @file ParticleSystem.cpp
- * @brief Implementacion del pool SoA de particulas data-driven y emisores climaticos.
+ * @brief Implementacion comentada linea por linea del pool SoA de particulas y emisores climaticos.
  */
 #include <AsciiEngine/ParticleSystem.hpp>
 #include <AsciiEngine/AsciiZBuffer.hpp>
-#include "json.hpp"
-#include "raylib.h" // Solo para TraceLog en diagnosticos.
+#include "json.hpp" // Dependencia privada: nunca se expone en headers publicos.
+#include "raylib.h" // Solo para TraceLog() en diagnosticos de carga.
 
 #include <algorithm>
 #include <cmath>
@@ -49,7 +51,8 @@ namespace AsciiEngine {
     } // namespace anonimo
 
     ParticleSystem::ParticleSystem() {
-        // Pre-alojamos todos los arreglos SoA una unica vez al arrancar el motor.
+        // Pre-alojamos toda la memoria del pool una sola vez al crear el motor.
+        // Durante la partida, ni nacer ni morir particulas provoca una sola llamada a malloc/new.
         m_posX.resize(MAX_PARTICLES, 0.0f);
         m_posY.resize(MAX_PARTICLES, 0.0f);
         m_posZ.resize(MAX_PARTICLES, 0.0f);
@@ -95,6 +98,8 @@ namespace AsciiEngine {
                     pt.velMin = ReadVec3(root["velocity"], "min", { -0.5f, -0.5f, 0.5f });
                     pt.velMax = ReadVec3(root["velocity"], "max", { 0.5f,  0.5f, 1.5f });
                 }
+
+                // Secuencia de caracteres ASCII a lo largo de la vida de la particula (ej. "*", "+", ".").
                 if (root.contains("asciiOverLife") && root["asciiOverLife"].is_array()) {
                     for (const auto& ch : root["asciiOverLife"]) {
                         std::string s = ch.get<std::string>();
@@ -103,6 +108,7 @@ namespace AsciiEngine {
                 }
                 if (pt.asciiOverLife.empty()) pt.asciiOverLife.push_back('*');
 
+                // Gradiente de colores interpolado a lo largo de la vida de la particula.
                 if (root.contains("colorOverLife") && root["colorOverLife"].is_array()) {
                     for (const auto& col : root["colorOverLife"]) {
                         pt.colorOverLife.push_back(ParseHex(col.get<std::string>(), { 255, 255, 255, 255 }));
@@ -126,7 +132,7 @@ namespace AsciiEngine {
 
     void ParticleSystem::ClearWorldState() {
         m_worldEmitters.clear();
-        m_activeCount = 0;
+        m_activeCount = 0; // Basta resetear el contador; los arreglos SoA conservan su memoria.
         m_weatherAccum = 0.0f;
         m_ambientNightAcc = 0.0f;
     }
@@ -154,6 +160,7 @@ namespace AsciiEngine {
     }
 
     void ParticleSystem::SpawnOne(uint16_t templateIdx, Vec3 pos) {
+        // Proteccion rigida de techo de memoria: si el pool esta lleno, descartamos silenciosamente.
         if (m_activeCount >= MAX_PARTICLES || templateIdx >= m_templates.size()) {
             return;
         }
@@ -165,6 +172,7 @@ namespace AsciiEngine {
             return d(m_rng);
             };
 
+        // Escribimos directamente al final del bloque vivo e incrementamos m_activeCount en O(1).
         const size_t i = m_activeCount++;
         m_posX[i] = pos.x;
         m_posY[i] = pos.y;
@@ -186,10 +194,11 @@ namespace AsciiEngine {
             return d(m_rng);
             };
 
-        // 1. Emisores fijos del mundo (chispas de fogatas/antorchas).
+        // 1. Emisores fijos del escenario (ej. chispas sobre braseros/antorchas).
         for (WorldParticleEmitter& em : m_worldEmitters) {
             if (em.nightOnly && !isNight) continue;
 
+            // Acumulador fraccionario: asegura la misma tasa de emision a 30, 60 o 144 FPS.
             em.accumulator += em.spawnRate * safeDt;
             int toSpawn = static_cast<int>(em.accumulator);
             em.accumulator -= static_cast<float>(toSpawn);
@@ -204,17 +213,20 @@ namespace AsciiEngine {
             }
         }
 
-        // 2. Emisor climatico volumetrico alrededor de la camara (lluvia / nieve).
+        // 2. Emisor climatico volumetrico centrado alrededor del foco de camara (lluvia / ventisca).
+        //    Al emitir solo en un volumen local de 72x72u alrededor de la camara, evitamos desperdiciar
+        //    el pool en zonas fuera de pantalla.
         uint16_t weatherIdx = 0;
         if (weatherSpawnRate > 0.1f && !weatherParticleId.empty() && FindTemplateIndex(weatherParticleId, weatherIdx)) {
             m_weatherAccum += weatherSpawnRate * safeDt;
+            // Tope de 80 particulas por frame para evitar picos subitos tras pausar la ventana.
             int toSpawn = std::min(static_cast<int>(m_weatherAccum), 80);
             m_weatherAccum -= static_cast<float>(toSpawn);
 
             const ParticleTemplate& pt = m_templates[weatherIdx];
             for (int s = 0; s < toSpawn && m_activeCount < MAX_PARTICLES; ++s) {
                 float zSpawn = pt.spawnHighVolume
-                    ? (11.0f + std::abs(randSym(7.0f)))
+                    ? (11.0f + std::abs(randSym(7.0f))) // Nace alto en el cielo (Z en [11..18]).
                     : (0.8f + std::abs(randSym(3.0f)));
                 Vec3 p = {
                     cameraWorldCenter.x + randSym(36.0f),
@@ -225,7 +237,7 @@ namespace AsciiEngine {
             }
         }
 
-        // 3. Luciernagas ambientales de noche si el clima esta despejado.
+        // 3. Luciernagas ambientales automaticas durante noches despejadas (sin lluvia ni ventisca).
         uint16_t fireflyIdx = 0;
         if (isNight && weatherSpawnRate < 5.0f && FindTemplateIndex("fireflies", fireflyIdx)) {
             m_ambientNightAcc += 14.0f * safeDt;
@@ -242,7 +254,7 @@ namespace AsciiEngine {
             }
         }
 
-        // 4. Integracion fisica lineal SoA + borrado O(1) swap-with-last.
+        // 4. Integracion fisica lineal SoA + borrado O(1) Swap-with-Last.
         const float windForceX = wind.dirX * wind.speed;
         const float windForceY = wind.dirY * wind.speed;
 
@@ -254,7 +266,7 @@ namespace AsciiEngine {
             bool dead = (m_age[i] >= m_maxAge[i]);
 
             if (!dead) {
-                // Aplicamos gravedad en Z e influencia del campo de viento en XY.
+                // Aplicamos gravedad vertical (Z) y empuje del campo vectorial de viento (XY).
                 m_velZ[i] += pt.gravityZ * safeDt;
                 float vx = m_velX[i] + windForceX * pt.windInfluence;
                 float vy = m_velY[i] + windForceY * pt.windInfluence;
@@ -263,11 +275,12 @@ namespace AsciiEngine {
                 m_posY[i] += vy * safeDt;
                 m_posZ[i] += m_velZ[i] * safeDt;
 
-                // Colision simple contra el plano del suelo Z = 0.
+                // Colision simple contra el plano del terreno (Z = 0).
                 if (m_posZ[i] <= 0.0f) {
                     if (pt.collideWithFloor) {
+                        // Detenemos la gota/copo en el suelo y le dejamos 60 ms de vida para que
+                        // muestre su ultimo glifo de impacto (ej. '.' en lluvia) antes de desaparecer.
                         m_posZ[i] = 0.0f;
-                        // En lluvia/nieve la particula muere tras un instante breve de impacto en suelo.
                         m_age[i] = std::max(m_age[i], m_maxAge[i] - 0.06f);
                         m_velX[i] = 0.0f;
                         m_velY[i] = 0.0f;
@@ -280,7 +293,8 @@ namespace AsciiEngine {
             }
 
             if (dead) {
-                // Swap-with-last en O(1): mantiene [0..m_activeCount) 100% compacto en cache.
+                // Swap-with-Last O(1): movemos la ultima particula viva al hueco libre 'i' y
+                // NO incrementamos 'i' para evaluar la particula recien trasladada en la siguiente iteracion.
                 size_t last = --m_activeCount;
                 if (i != last) {
                     m_posX[i] = m_posX[last];
@@ -303,14 +317,16 @@ namespace AsciiEngine {
     void ParticleSystem::SubmitToZBuffer(AsciiZBuffer& zBuffer, const MathIso::IsoConfig& isoConfig,
         float zoom, float camTopLeftX, float camTopLeftY,
         float screenW, float screenH, int renderStride) const {
+        // LOD de zoom alejado: renderStride = 2 recorre solo la mitad de las particulas en O(P/2).
         const size_t step = static_cast<size_t>(std::max(1, renderStride));
+
         for (size_t i = 0; i < m_activeCount; i += step) {
-            Vec3 worldPt = { m_posX[i], m_posY[i], m_posZ[i] };
-            Vec2 isoPt = MathIso::WorldToIso(worldPt, isoConfig);
+            Vec3  worldPt = { m_posX[i], m_posY[i], m_posZ[i] };
+            Vec2  isoPt = MathIso::WorldToIso(worldPt, isoConfig);
             float zoomedX = isoPt.x * zoom;
             float zoomedY = isoPt.y * zoom;
 
-            // Descarte rapido de Capa 3 antes de muestrear color y glifo.
+            // Pre-check rapido de Capa 3 antes de calcular vida, glifo y gradiente de color.
             float sx = zoomedX - camTopLeftX;
             float sy = zoomedY - camTopLeftY;
             if (sx < 0.0f || sx >= screenW || sy < 0.0f || sy >= screenH) {
@@ -318,28 +334,32 @@ namespace AsciiEngine {
             }
 
             const ParticleTemplate& pt = m_templates[m_templateIdx[i]];
+            // Progreso normalizado de vida en [0.0 .. 0.999] para indexar arreglos sin desbordar.
             float lifeT = MathIso::Clamp(m_age[i] / std::max(m_maxAge[i], 0.001f), 0.0f, 0.999f);
 
-            // Seleccion de caracter ASCII segun el progreso de vida.
+            // 1. Glifo correspondiente a la fase actual de vida.
             size_t glyphIdx = static_cast<size_t>(lifeT * static_cast<float>(pt.asciiOverLife.size()));
-            char glyph = pt.asciiOverLife[std::min(glyphIdx, pt.asciiOverLife.size() - 1)];
+            char   glyph = pt.asciiOverLife[std::min(glyphIdx, pt.asciiOverLife.size() - 1)];
 
-            // Interpolacion lineal sobre el gradiente de colores definido en JSON.
+            // 2. Interpolacion lineal por tramos sobre la paleta colorOverLife del JSON.
             ColorRGBA col = pt.colorOverLife[0];
             if (pt.colorOverLife.size() > 1) {
-                float scaled = lifeT * static_cast<float>(pt.colorOverLife.size() - 1);
+                float  scaled = lifeT * static_cast<float>(pt.colorOverLife.size() - 1);
                 size_t c0 = static_cast<size_t>(scaled);
                 size_t c1 = std::min(c0 + 1, pt.colorOverLife.size() - 1);
                 col = MathIso::LerpColor(pt.colorOverLife[c0], pt.colorOverLife[c1], scaled - static_cast<float>(c0));
             }
 
-            // Particulas sin outline negro para mantener aspecto etereo/emisivo.
+            // 3. Enviamos con FALLBACK_MATERIAL_ID y wantsOutline=false para que sean etereas/emisivas
+            //    (sin respaldo volumetrico en Pase 0 ni contorno negro en Pase 1).
+            //    El sesgo +0.02f asegura que chispas y gotas resalten ligeramente sobre objetos adyacentes.
             float depth = MathIso::ComputeDepthKey(worldPt) + 0.02f;
             zBuffer.SubmitAtom(zoomedX, zoomedY, depth, glyph, col, FALLBACK_MATERIAL_ID, false, 0, false);
         }
     }
 
     size_t ParticleSystem::GetMemoryBytes() const {
+        // 8 arreglos de float (posXYZ, velXYZ, age, maxAge) + 1 arreglo de uint16_t (templateIdx).
         return MAX_PARTICLES * (sizeof(float) * 8 + sizeof(uint16_t));
     }
 
