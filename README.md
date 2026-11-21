@@ -15,7 +15,7 @@
 [![Raylib](https://img.shields.io/badge/Raylib-6.2-F5F5F5?style=for-the-badge&logo=raylib&logoColor=black)](https://www.raylib.com/)
 [![CMake](https://img.shields.io/badge/CMake-3.20+-064F8C?style=for-the-badge&logo=cmake&logoColor=white)](https://cmake.org/)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20x64-0078D6?style=for-the-badge&logo=windows&logoColor=white)]()
-[![Status](https://img.shields.io/badge/Status-Phase%2002%20Complete-2EA043?style=for-the-badge)]()
+[![Status](https://img.shields.io/badge/Status-Phase%2007%20Complete-2EA043?style=for-the-badge)]()
 
 **[English](#english)** • **[Español](#español)**
 
@@ -100,7 +100,7 @@ AsciiEngine/
 │   ├── data/                # JSON registries (materials, objects, characters, particles, biomes, weather, maps)
 │   └── fonts/               # High-res monospaced .ttf fonts
 ├── sandbox/                 # Executable demo consuming the engine library
-├── third_party/             # Raylib 5.5, nlohmann/json, Raygui
+├── third_party/             # Raylib 6.2, nlohmann/json, Raygui
 └── docs/                    # Architecture notes & JSON schemas
 ```
 
@@ -123,11 +123,11 @@ AsciiEngine/
 - [x] **Phase 0:** Repository setup, CMake static library (`.lib`) + Sandbox (`.exe`), and Facade `Context`.
 - [x] **Phase 1:** Isometric 2:1 math core (`MathIso`), typography LUT, and JSON `MaterialSystem`.
 - [x] **Phase 2:** 3-Layer Culling (`SpatialHashGrid` + Frustum), Screen-Space ASCII Z-Buffer, and Debug HUD v1 (`F3`).
-- [ ] **Phase 3:** Modular JSON object templates, Point-Cloud Baking (Flyweight), and simple collision physics.
-- [ ] **Phase 4:** Dynamic Day/Night cycle, hemispherical GI, point lights, and 2.5D heightfield shadows.
-- [ ] **Phase 5:** Wind fields, water reflections, SoA JSON particles, and biome-driven weather system.
-- [ ] **Phase 6:** Agnostic modular JSON character system and procedural animation tracks.
-- [ ] **Phase 7:** Embedded Raygui Map Editor, Undo/Redo, JSON export, and Hot-Reloading (`F5`).
+- [x] **Phase 3:** Modular JSON object templates, Point-Cloud Baking (Flyweight), and simple collision physics.
+- [x] **Phase 4:** Dynamic Day/Night cycle, hemispherical GI, point lights, and 2.5D heightfield shadows.
+- [x] **Phase 5:** Wind fields, water reflections, SoA JSON particles, and biome-driven weather system.
+- [x] **Phase 6:** Agnostic modular JSON character system and procedural animation tracks.
+- [x] **Phase 7:** Embedded Raygui Map Editor, Undo/Redo, JSON export, and Hot-Reloading (`F5`).
 - [ ] **Phase 8:** Final profiling, didactic documentation audit, and `v1.0.0` release.
 
 ---
@@ -215,11 +215,11 @@ int main() {
 - [x] **Fase 0:** Estructura del repositorio, CMake librería estática (`.lib`) + Sandbox (`.exe`) y Fachada `Context`.
 - [x] **Fase 1:** Núcleo matemático isométrico 2:1 (`MathIso`), tabla tipográfica LUT y `MaterialSystem` en JSON.
 - [x] **Fase 2:** Culling en 3 capas (`SpatialHashGrid` + Frustum), Screen-Space ASCII Z-Buffer y Debug HUD v1 (`F3`).
-- [ ] **Fase 3:** Plantillas de objetos modulares en JSON, Point-Cloud Baking (Flyweight) y física de colisiones.
-- [ ] **Fase 4:** Ciclo Día-Noche dinámico, iluminación hemisférica GI, luces puntuales y sombras 2.5D.
-- [ ] **Fase 5:** Campo de viento, reflejos en agua, partículas SoA en JSON y clima aleatorio por biomas.
-- [ ] **Fase 6:** Sistema de personajes modulares agnósticos en JSON y pistas de animación procedural.
-- [ ] **Fase 7:** Editor visual de mapas con Raygui, Undo/Redo, guardado en JSON y Hot-Reloading (`F5`).
+- [x] **Fase 3:** Plantillas de objetos modulares en JSON, Point-Cloud Baking (Flyweight) y física de colisiones.
+- [x] **Fase 4:** Ciclo Día-Noche dinámico, iluminación hemisférica GI, luces puntuales y sombras 2.5D.
+- [x] **Fase 5:** Campo de viento, reflejos en agua, partículas SoA en JSON y clima aleatorio por biomas.
+- [x] **Fase 6:** Sistema de personajes modulares agnósticos en JSON y pistas de animación procedural.
+- [x] **Fase 7:** Editor visual de mapas con Raygui, Undo/Redo, guardado en JSON y Hot-Reloading (`F5`).
 - [ ] **Fase 8:** Perfilado final de rendimiento, auditoría didáctica de comentarios y lanzamiento `v1.0.0`.
 
 ---
