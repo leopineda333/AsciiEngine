@@ -142,6 +142,11 @@ namespace AsciiEngine {
         uint32_t    activeParticles = 0;
         uint32_t    maxParticles = 0;
 
+        // Estado del sistema de personajes modulares (Fase 6).
+        uint32_t    activeCharacters = 0;
+        std::string controlledCharName = "None";
+        std::string controlledAnimState = "IDLE";
+
         Vec2  cameraWorldPos = {};
         float cameraZoom = 1.0f;
         int   gridWidth = 0;

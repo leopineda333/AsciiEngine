@@ -140,6 +140,16 @@ namespace AsciiEngine {
         float gustStrength = 1.0f;
     };
 
+    // Definicion de aparicion de un personaje en el mapa JSON (seccion "entities").
+    struct EntitySpawnDef {
+        std::string characterId;
+        Vec2        position = {};
+        float       facingDeg = 45.0f;
+        float       scale = 1.0f;
+        float       wanderRadius = 8.0f;
+        bool        isPlayer = false;
+    };
+
     struct SimpleActor {
         Vec2  position = { 0.0f, 0.0f };
         Vec2  velocity = { 0.0f, 0.0f };
@@ -166,6 +176,8 @@ namespace AsciiEngine {
 
         // Consulta O(1): devuelve true SOLO si no hay objeto, agua ni superficie que suprima pasto.
         bool CanSpawnGroundFoliageAt(float worldX, float worldY) const;
+
+        const std::vector<EntitySpawnDef>& GetEntitySpawns() const { return m_entitySpawns; }
 
         PrefabId GetPrefabId(std::string_view id) const;
         const BakedPrefab* GetPrefab(PrefabId id) const;
@@ -207,6 +219,7 @@ namespace AsciiEngine {
         std::vector<MapInstance>                  m_instances;
         std::vector<WaterZone>                    m_waterZones;
         std::vector<SurfaceZone>                  m_surfaceZones;
+        std::vector<EntitySpawnDef>               m_entitySpawns;
 
         // Mascara 2D de ocupacion del suelo (1 byte por celda -> acceso O(1)).
         float                m_maskOriginX = -140.0f;

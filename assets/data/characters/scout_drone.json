@@ -1,0 +1,145 @@
+{
+  "id": "scout_drone",
+  "name": "Dron Sonda",
+  "collisionRadius": 0.70,
+  "walkSpeed": 16.0,
+  "runSpeed": 26.0,
+  "baseElevationZ": 1.65,
+  "sections": [
+    {
+      "id": "chassis",
+      "parentId": "",
+      "materialId": "cyber_chassis",
+      "shape": "ELLIPSOID",
+      "size": {
+        "x": 1.05,
+        "y": 1.05,
+        "z": 0.62
+      },
+      "localOffset": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "cellScale": 0.14,
+      "animTracks": {
+        "IDLE": {
+          "posAxis": "Z",
+          "posAmplitude": 0.22,
+          "frequency": 2.8,
+          "phaseOffset": 0.0
+        },
+        "WALK": {
+          "posAxis": "Z",
+          "posAmplitude": 0.14,
+          "rotAxis": "Y",
+          "rotAmpDeg": 12.0,
+          "frequency": 3.5,
+          "phaseOffset": 0.0
+        },
+        "ATTACK": {
+          "rotAxis": "Z",
+          "rotAmpDeg": 180.0,
+          "frequency": 14.0,
+          "spinContinuous": true
+        }
+      }
+    },
+    {
+      "id": "core_eye",
+      "parentId": "chassis",
+      "materialId": "cyber_glow",
+      "shape": "ELLIPSOID",
+      "size": {
+        "x": 0.36,
+        "y": 0.42,
+        "z": 0.34
+      },
+      "localOffset": {
+        "x": 0.48,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "cellScale": 0.12
+    },
+    {
+      "id": "rotor_bar",
+      "parentId": "chassis",
+      "materialId": "metal_iron",
+      "shape": "BOX",
+      "size": {
+        "x": 1.75,
+        "y": 0.20,
+        "z": 0.12
+      },
+      "localOffset": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.46
+      },
+      "cellScale": 0.14,
+      "animTracks": {
+        "IDLE": {
+          "rotAxis": "Z",
+          "frequency": 11.0,
+          "spinContinuous": true
+        },
+        "WALK": {
+          "rotAxis": "Z",
+          "frequency": 18.0,
+          "spinContinuous": true
+        }
+      }
+    },
+    {
+      "id": "wing_left",
+      "parentId": "chassis",
+      "materialId": "cyber_chassis",
+      "shape": "BOX",
+      "size": {
+        "x": 0.55,
+        "y": 0.45,
+        "z": 0.14
+      },
+      "localOffset": {
+        "x": -0.15,
+        "y": 0.68,
+        "z": -0.05
+      },
+      "cellScale": 0.14,
+      "animTracks": {
+        "IDLE": {
+          "rotAxis": "X",
+          "rotAmpDeg": 12.0,
+          "frequency": 3.2,
+          "phaseOffset": 0.0
+        }
+      }
+    },
+    {
+      "id": "wing_right",
+      "parentId": "chassis",
+      "materialId": "cyber_chassis",
+      "shape": "BOX",
+      "size": {
+        "x": 0.55,
+        "y": 0.45,
+        "z": 0.14
+      },
+      "localOffset": {
+        "x": -0.15,
+        "y": -0.68,
+        "z": -0.05
+      },
+      "cellScale": 0.14,
+      "animTracks": {
+        "IDLE": {
+          "rotAxis": "X",
+          "rotAmpDeg": 12.0,
+          "frequency": 3.2,
+          "phaseOffset": 3.14159
+        }
+      }
+    }
+  ]
+}

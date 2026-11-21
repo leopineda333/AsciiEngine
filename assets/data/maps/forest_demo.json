@@ -126,6 +126,57 @@
       "flicker": true
     }
   ],
+  "entities": [
+    {
+      "characterId": "hero_human",
+      "pos": {
+        "x": 0.0,
+        "y": 4.5,
+        "z": 0.0
+      },
+      "facingDeg": 45.0,
+      "isPlayer": true,
+      "wanderRadius": 0.0,
+      "scale": 1.0
+    },
+    {
+      "characterId": "wolf_quadruped",
+      "pos": {
+        "x": -4.2,
+        "y": 5.2,
+        "z": 0.0
+      },
+      "facingDeg": 20.0,
+      "isPlayer": false,
+      "wanderRadius": 9.0,
+      "scale": 1.0
+    },
+    {
+      "characterId": "wolf_quadruped",
+      "pos": {
+        "x": 4.8,
+        "y": -2.5,
+        "z": 0.0
+      },
+      "facingDeg": 160.0,
+      "isPlayer": false,
+      "wanderRadius": 10.0,
+      "scale": 0.92
+    },
+    {
+      "characterId": "scout_drone",
+      "pos": {
+        "x": 2.2,
+        "y": 5.8,
+        "z": 0.0
+      },
+      "facingDeg": 225.0,
+      "isPlayer": false,
+      "wanderRadius": 12.0,
+      "scale": 1.0
+    }
+  ],
+
   "instances": [
     {
       "prefabId": "arch_wall",

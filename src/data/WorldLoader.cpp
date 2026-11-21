@@ -392,6 +392,7 @@ namespace AsciiEngine {
         }
 
         m_instances.clear();
+        m_entitySpawns.clear();
         m_mapLights.clear();
         m_waterZones.clear();
         m_surfaceZones.clear();
@@ -495,6 +496,23 @@ namespace AsciiEngine {
                 pl.flickerPhase = phaseCounter * 2.13f;
                 phaseCounter += 1.0f;
                 m_mapLights.push_back(pl);
+            }
+        }
+
+        // Lectura de personajes iniciales definidos en el mapa JSON.
+        if (root.contains("entities") && root["entities"].is_array()) {
+            for (const auto& e : root["entities"]) {
+                EntitySpawnDef def;
+                def.characterId = e.value("characterId", "");
+                if (def.characterId.empty()) continue;
+
+                Vec3 p3 = ReadVec3(e, "pos", { m_playerSpawn.x, m_playerSpawn.y, 0.0f });
+                def.position = { p3.x, p3.y };
+                def.facingDeg = e.value("facingDeg", 45.0f);
+                def.scale = e.value("scale", 1.0f);
+                def.wanderRadius = e.value("wanderRadius", 8.0f);
+                def.isPlayer = e.value("isPlayer", false);
+                m_entitySpawns.push_back(std::move(def));
             }
         }
 
