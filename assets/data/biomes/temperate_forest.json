@@ -1,0 +1,61 @@
+{
+  "id": "temperate_forest",
+  "name": "Bosque Templado",
+  "ground": {
+    "baseColor": "#4E684A",
+    "altColor": "#3A5038",
+    "glyphs": ".,'`",
+    "shadowGlyphs": ":;,",
+    "density": 0.36
+  },
+  "foliageDistribution": {
+    "clumpStep": 1.35,
+    "patchScale": 0.22,
+    "patchSeparation": 0.32,
+    "globalDensity": 1.15
+  },
+  "groundFoliage": [
+    {
+      "id": "meadow_grass",
+      "isTallBlade": true,
+      "glyphs": "|",
+      "baseColor": "#27592E",
+      "tipColor": "#5DA856",
+      "spawnChance": 0.30,
+      "heightZ": 1.05,
+      "windWeight": 1.0,
+      "minBlades": 3,
+      "maxBlades": 5,
+      "clumpSpread": 1.05,
+      "interactive": true
+    },
+    {
+      "id": "wildflower_gold",
+      "isTallBlade": false,
+      "glyphs": "*o+",
+      "baseColor": "#2C6334",
+      "tipColor": "#F2CE52",
+      "spawnChance": 0.04,
+      "heightZ": 0.85,
+      "windWeight": 0.75,
+      "minBlades": 1,
+      "maxBlades": 3,
+      "clumpSpread": 0.75,
+      "interactive": true
+    },
+    {
+      "id": "wildflower_violet",
+      "isTallBlade": false,
+      "glyphs": "*v+",
+      "baseColor": "#2C6334",
+      "tipColor": "#C282F2",
+      "spawnChance": 0.03,
+      "heightZ": 0.85,
+      "windWeight": 0.75,
+      "minBlades": 1,
+      "maxBlades": 2,
+      "clumpSpread": 0.65,
+      "interactive": true
+    }
+  ]
+}

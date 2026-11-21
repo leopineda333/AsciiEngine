@@ -1,0 +1,259 @@
+{
+  "id": "hero_human",
+  "name": "Explorador",
+  "collisionRadius": 0.65,
+  "walkSpeed": 3.5,
+  "runSpeed": 12.0,
+  "baseElevationZ": 0.0,
+  "sections": [
+    {
+      "id": "pelvis",
+      "parentId": "",
+      "materialId": "fabric_crimson",
+      "shape": "BOX",
+      "size": {
+        "x": 0.45,
+        "y": 0.68,
+        "z": 0.34
+      },
+      "localOffset": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.95
+      },
+      "cellScale": 0.14,
+      "animTracks": {
+        "WALK": {
+          "posAxis": "Z",
+          "posAmplitude": 0.06,
+          "frequency": 14.0,
+          "phaseOffset": 0.0
+        }
+      }
+    },
+    {
+      "id": "leg_left",
+      "parentId": "pelvis",
+      "materialId": "wood_bark",
+      "shape": "CYLINDER",
+      "size": {
+        "x": 0.26,
+        "y": 0.26,
+        "z": 0.88
+      },
+      "localOffset": {
+        "x": 0.0,
+        "y": 0.22,
+        "z": -0.05
+      },
+      "pivotOffset": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": -0.44
+      },
+      "cellScale": 0.14,
+      "animTracks": {
+        "WALK": {
+          "rotAxis": "Y",
+          "rotAmpDeg": 32.0,
+          "frequency": 7.0,
+          "phaseOffset": 0.0
+        }
+      }
+    },
+    {
+      "id": "leg_right",
+      "parentId": "pelvis",
+      "materialId": "wood_bark",
+      "shape": "CYLINDER",
+      "size": {
+        "x": 0.26,
+        "y": 0.26,
+        "z": 0.88
+      },
+      "localOffset": {
+        "x": 0.0,
+        "y": -0.22,
+        "z": -0.05
+      },
+      "pivotOffset": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": -0.44
+      },
+      "cellScale": 0.14,
+      "animTracks": {
+        "WALK": {
+          "rotAxis": "Y",
+          "rotAmpDeg": 32.0,
+          "frequency": 7.0,
+          "phaseOffset": 3.14159
+        }
+      }
+    },
+    {
+      "id": "torso",
+      "parentId": "pelvis",
+      "materialId": "metal_iron",
+      "shape": "BOX",
+      "size": {
+        "x": 0.52,
+        "y": 0.82,
+        "z": 0.92
+      },
+      "localOffset": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.56
+      },
+      "cellScale": 0.14,
+      "animTracks": {
+        "IDLE": {
+          "posAxis": "Z",
+          "posAmplitude": 0.03,
+          "frequency": 2.4,
+          "phaseOffset": 0.0
+        },
+        "WALK": {
+          "rotAxis": "Z",
+          "rotAmpDeg": 7.0,
+          "frequency": 7.0,
+          "phaseOffset": 0.0
+        },
+        "ATTACK": {
+          "rotAxis": "Z",
+          "rotAmpDeg": 38.0,
+          "frequency": 13.0,
+          "phaseOffset": 0.0
+        }
+      }
+    },
+    {
+      "id": "cloak",
+      "parentId": "torso",
+      "materialId": "fabric_crimson",
+      "shape": "BOX",
+      "size": {
+        "x": 0.16,
+        "y": 0.72,
+        "z": 0.96
+      },
+      "localOffset": {
+        "x": -0.32,
+        "y": 0.0,
+        "z": 0.34
+      },
+      "pivotOffset": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": -0.48
+      },
+      "cellScale": 0.15,
+      "animTracks": {
+        "IDLE": {
+          "rotAxis": "Y",
+          "rotAmpDeg": 6.0,
+          "frequency": 2.8,
+          "phaseOffset": 0.7
+        },
+        "WALK": {
+          "rotAxis": "Y",
+          "rotAmpDeg": 20.0,
+          "frequency": 7.0,
+          "phaseOffset": 1.2
+        }
+      }
+    },
+    {
+      "id": "arm_left",
+      "parentId": "torso",
+      "materialId": "fabric_crimson",
+      "shape": "CYLINDER",
+      "size": {
+        "x": 0.24,
+        "y": 0.24,
+        "z": 0.78
+      },
+      "localOffset": {
+        "x": 0.0,
+        "y": 0.52,
+        "z": 0.34
+      },
+      "pivotOffset": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": -0.36
+      },
+      "cellScale": 0.14,
+      "animTracks": {
+        "WALK": {
+          "rotAxis": "Y",
+          "rotAmpDeg": 28.0,
+          "frequency": 7.0,
+          "phaseOffset": 3.14159
+        }
+      }
+    },
+    {
+      "id": "arm_right",
+      "parentId": "torso",
+      "materialId": "metal_iron",
+      "shape": "CYLINDER",
+      "size": {
+        "x": 0.24,
+        "y": 0.24,
+        "z": 0.78
+      },
+      "localOffset": {
+        "x": 0.0,
+        "y": -0.52,
+        "z": 0.34
+      },
+      "pivotOffset": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": -0.36
+      },
+      "cellScale": 0.14,
+      "animTracks": {
+        "WALK": {
+          "rotAxis": "Y",
+          "rotAmpDeg": 28.0,
+          "frequency": 7.0,
+          "phaseOffset": 0.0
+        },
+        "ATTACK": {
+          "rotAxis": "Y",
+          "rotAmpDeg": 75.0,
+          "frequency": 13.0,
+          "phaseOffset": 0.0
+        }
+      }
+    },
+    {
+      "id": "head",
+      "parentId": "torso",
+      "materialId": "skin_warm",
+      "shape": "ELLIPSOID",
+      "size": {
+        "x": 0.56,
+        "y": 0.54,
+        "z": 0.62
+      },
+      "localOffset": {
+        "x": 0.04,
+        "y": 0.0,
+        "z": 0.74
+      },
+      "cellScale": 0.13,
+      "animTracks": {
+        "IDLE": {
+          "rotAxis": "Z",
+          "rotAmpDeg": 10.0,
+          "frequency": 1.1,
+          "phaseOffset": 0.0
+        }
+      }
+    }
+  ]
+}

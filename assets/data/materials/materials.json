@@ -110,6 +110,91 @@
         "occludesLight": true,
         "outline": false
       }
+    },
+    {
+      "id": "fabric_crimson",
+      "asciiRamp": ".:=+x#@",
+      "colors": {
+        "dark": "#3D121A",
+        "normal": "#8A2838",
+        "lit": "#D9576B"
+      },
+      "gridMode": "REGULAR",
+      "properties": {
+        "roughness": 0.90,
+        "reflectivity": 0.0,
+        "occludesLight": false,
+        "outline": true
+      }
+    },
+    {
+      "id": "skin_warm",
+      "asciiRamp": ".:;oO#@",
+      "colors": {
+        "dark": "#6E4634",
+        "normal": "#BA8365",
+        "lit": "#F2C6A6"
+      },
+      "gridMode": "REGULAR",
+      "properties": {
+        "roughness": 0.70,
+        "reflectivity": 0.0,
+        "occludesLight": false,
+        "outline": true
+      }
+    },
+    {
+      "id": "fur_wolf",
+      "asciiRamp": ",;vVw#@",
+      "colors": {
+        "dark": "#2E2C2A",
+        "normal": "#66625C",
+        "lit": "#B5AFA6"
+      },
+      "gridMode": "NOISY",
+      "noisySettings": {
+        "jitter": 0.25,
+        "density": 0.92,
+        "windWeight": 0.0
+      },
+      "properties": {
+        "roughness": 0.95,
+        "reflectivity": 0.0,
+        "occludesLight": false,
+        "outline": true
+      }
+    },
+    {
+      "id": "cyber_chassis",
+      "asciiRamp": ".:=+#%@",
+      "colors": {
+        "dark": "#1E2A38",
+        "normal": "#456380",
+        "lit": "#9AC8EB"
+      },
+      "gridMode": "REGULAR",
+      "properties": {
+        "roughness": 0.25,
+        "reflectivity": 0.5,
+        "occludesLight": false,
+        "outline": true
+      }
+    },
+    {
+      "id": "cyber_glow",
+      "asciiRamp": "+*#%@",
+      "colors": {
+        "dark": "#2EA8D9",
+        "normal": "#6CE0FF",
+        "lit": "#E0FAFF"
+      },
+      "gridMode": "REGULAR",
+      "properties": {
+        "roughness": 0.10,
+        "reflectivity": 0.8,
+        "occludesLight": false,
+        "outline": false
+      }
     }
   ]
 }

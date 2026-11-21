@@ -35,6 +35,34 @@ namespace AsciiEngine {
             return def;
         }
 
+        uint8_t HexNibble(char c) {
+            if (c >= '0' && c <= '9') return static_cast<uint8_t>(c - '0');
+            if (c >= 'a' && c <= 'f') return static_cast<uint8_t>(10 + (c - 'a'));
+            if (c >= 'A' && c <= 'F') return static_cast<uint8_t>(10 + (c - 'A'));
+            return 0;
+        }
+
+        ColorRGBA ReadColor(const json& obj, const char* key, ColorRGBA def) {
+            if (!obj.contains(key)) return def;
+            const auto& c = obj[key];
+            if (c.is_string()) {
+                std::string s = c.get<std::string>();
+                size_t off = (!s.empty() && s[0] == '#') ? 1 : 0;
+                if (s.size() >= off + 6) {
+                    return {
+                        static_cast<uint8_t>((HexNibble(s[off + 0]) << 4) | HexNibble(s[off + 1])),
+                        static_cast<uint8_t>((HexNibble(s[off + 2]) << 4) | HexNibble(s[off + 3])),
+                        static_cast<uint8_t>((HexNibble(s[off + 4]) << 4) | HexNibble(s[off + 5])),
+                        255
+                    };
+                }
+            }
+            else if (c.is_array() && c.size() >= 3) {
+                return { c[0].get<uint8_t>(), c[1].get<uint8_t>(), c[2].get<uint8_t>(), 255 };
+            }
+            return def;
+        }
+
         // Aplica jitter y densidad si el material usa GridMode::NOISY.
         // Retorna false si el punto es descartado por porosidad.
         bool ApplyMaterialGridNoise(Vec3& p, float step, const Material& mat, float seed) {
@@ -265,6 +293,15 @@ namespace AsciiEngine {
             return col;
         }
 
+        std::string ColorToHex(const ColorRGBA& c) {
+            static constexpr char kHex[] = "0123456789ABCDEF";
+            std::string out = "#000000";
+            out[1] = kHex[(c.r >> 4) & 0xF]; out[2] = kHex[c.r & 0xF];
+            out[3] = kHex[(c.g >> 4) & 0xF]; out[4] = kHex[c.g & 0xF];
+            out[5] = kHex[(c.b >> 4) & 0xF]; out[6] = kHex[c.b & 0xF];
+            return out;
+        }
+
     } // namespace anonimo
 
     bool World::LoadObjectsDirectory(const std::string& objectsDir, const MaterialSystem& materials) {
@@ -346,7 +383,8 @@ namespace AsciiEngine {
         return id;
     }
 
-    bool World::LoadMapFromFile(const std::string& mapPath, SpatialHashGrid& spatialGrid) {
+    bool World::LoadMapFromFile(const std::string& mapPath, SpatialHashGrid& spatialGrid, const MaterialSystem* materials) {
+
         std::ifstream file(mapPath);
         if (!file.is_open()) {
             TraceLog(LOG_ERROR, "WORLD: No se pudo abrir el mapa %s", mapPath.c_str());
@@ -363,16 +401,128 @@ namespace AsciiEngine {
         }
 
         m_instances.clear();
+        m_entitySpawns.clear();
+        m_mapLights.clear();
+        m_waterZones.clear();
+        m_surfaceZones.clear();
+        m_dayNightConfig = DayNightConfig{};
+        m_giConfig = GlobalIlluminationConfig{};
+        m_windConfig = WorldWindConfig{};
+        m_biomeId = "temperate_forest";
+        m_initialWeatherId = "clear_day";
+        m_randomWeather = true;
 
         if (root.contains("worldConfig")) {
             const auto& wc = root["worldConfig"];
             m_worldHalfSize = wc.value("worldHalfSize", 140.0f);
+            m_biomeId = wc.value("biomeId", "temperate_forest");
+            m_viewPaddingPx = wc["culling"].value("viewPadding", 140.0f);
+
             if (wc.contains("culling")) {
                 m_chunkSize = wc["culling"].value("chunkSize", 24.0f);
             }
             if (wc.contains("playerSpawn")) {
                 const auto& ps = wc["playerSpawn"];
                 m_playerSpawn = { ps.value("x", 0.0f), ps.value("y", 0.0f) };
+            }
+            if (wc.contains("dayNightCycle")) {
+                const auto& dn = wc["dayNightCycle"];
+                m_dayNightConfig.enabled = dn.value("enabled", true);
+                m_dayNightConfig.currentTimeHours = dn.value("currentTimeHours", 10.5f);
+                m_dayNightConfig.dayLengthSeconds = dn.value("dayLengthSeconds", 120.0f);
+            }
+            if (wc.contains("globalIllumination")) {
+                const auto& gi = wc["globalIllumination"];
+                m_giConfig.skyColor = ReadColor(gi, "skyColor", m_giConfig.skyColor);
+                m_giConfig.groundColor = ReadColor(gi, "groundColor", m_giConfig.groundColor);
+                m_giConfig.ambientStrength = gi.value("ambientStrength", 0.32f);
+            }
+            if (wc.contains("wind")) {
+                const auto& w = wc["wind"];
+                m_windConfig.directionDeg = w.value("directionDeg", 45.0f);
+                m_windConfig.baseSpeed = w.value("baseSpeed", 2.2f);
+                m_windConfig.gustStrength = w.value("gustStrength", 1.0f);
+            }
+            if (wc.contains("weather")) {
+                const auto& wt = wc["weather"];
+                m_initialWeatherId = wt.value("currentWeatherId", "clear_day");
+                m_randomWeather = wt.value("randomTransitionsEnabled", true);
+            }
+        }
+
+        // Lectura de zonas de agua (estanques, rios).
+        if (root.contains("waterZones") && root["waterZones"].is_array()) {
+            for (const auto& wz : root["waterZones"]) {
+                WaterZone zone;
+                zone.minX = wz.value("minX", -5.0f);
+                zone.maxX = wz.value("maxX", 5.0f);
+                zone.minY = wz.value("minY", -5.0f);
+                zone.maxY = wz.value("maxY", 5.0f);
+                zone.deepColor = ReadColor(wz, "deepColor", zone.deepColor);
+                zone.shallowColor = ReadColor(wz, "shallowColor", zone.shallowColor);
+                zone.waveSpeed = wz.value("waveSpeed", 2.6f);
+                m_waterZones.push_back(zone);
+            }
+        }
+
+        // Lectura de superficies transitables (puentes, pisos de casas, plataformas sci-fi).
+        if (root.contains("surfaceZones") && root["surfaceZones"].is_array()) {
+            for (const auto& sz : root["surfaceZones"]) {
+                SurfaceZone zone;
+                zone.id = sz.value("id", "surface");
+                zone.minX = sz.value("minX", -2.0f);
+                zone.maxX = sz.value("maxX", 2.0f);
+                zone.minY = sz.value("minY", -2.0f);
+                zone.maxY = sz.value("maxY", 2.0f);
+                zone.elevationZ = sz.value("elevationZ", 0.05f);
+                zone.primaryColor = ReadColor(sz, "primaryColor", zone.primaryColor);
+                zone.secondaryColor = ReadColor(sz, "secondaryColor", zone.secondaryColor);
+                zone.glyphs = sz.value("glyphs", "=#-");
+                if (zone.glyphs.empty()) zone.glyphs = "=";
+                zone.suppressFoliage = sz.value("suppressFoliage", true);
+                zone.walkableOverWater = sz.value("walkableOverWater", true);
+
+                std::string pat = sz.value("pattern", "GRID");
+                if (pat == "PLANKS_X") zone.pattern = SurfacePattern::PLANKS_X;
+                else if (pat == "PLANKS_Y") zone.pattern = SurfacePattern::PLANKS_Y;
+                else if (pat == "CHECKER")  zone.pattern = SurfacePattern::CHECKER;
+                else if (pat == "NOISE")    zone.pattern = SurfacePattern::NOISE;
+                else                        zone.pattern = SurfacePattern::GRID;
+
+                m_surfaceZones.push_back(std::move(zone));
+            }
+        }
+
+        // Lectura de fuentes de luz estaticas / parpadeantes del mapa.
+        if (root.contains("lights") && root["lights"].is_array()) {
+            float phaseCounter = 0.0f;
+            for (const auto& l : root["lights"]) {
+                PointLight pl;
+                pl.position = ReadVec3(l, "pos", { 0.0f, 0.0f, 2.0f });
+                pl.color = ReadColor(l, "color", { 255, 160, 75, 255 });
+                pl.intensity = l.value("intensity", 1.2f);
+                pl.radius = l.value("radius", 10.0f);
+                pl.flicker = l.value("flicker", false);
+                pl.flickerPhase = phaseCounter * 2.13f;
+                phaseCounter += 1.0f;
+                m_mapLights.push_back(pl);
+            }
+        }
+
+        // Lectura de personajes iniciales definidos en el mapa JSON.
+        if (root.contains("entities") && root["entities"].is_array()) {
+            for (const auto& e : root["entities"]) {
+                EntitySpawnDef def;
+                def.characterId = e.value("characterId", "");
+                if (def.characterId.empty()) continue;
+
+                Vec3 p3 = ReadVec3(e, "pos", { m_playerSpawn.x, m_playerSpawn.y, 0.0f });
+                def.position = { p3.x, p3.y };
+                def.facingDeg = e.value("facingDeg", 45.0f);
+                def.scale = e.value("scale", 1.0f);
+                def.wanderRadius = e.value("wanderRadius", 8.0f);
+                def.isPlayer = e.value("isPlayer", false);
+                m_entitySpawns.push_back(std::move(def));
             }
         }
 
@@ -404,7 +554,12 @@ namespace AsciiEngine {
                         scale = ReadVec3(item, "scale", { 1.0f, 1.0f, 1.0f });
                     }
                 }
-                SpawnInstance(pid, pos, rot, scale, spatialGrid);
+                MaterialId ovMat = FALLBACK_MATERIAL_ID;
+                if (materials && item.contains("overrideMaterialId")) {
+                    std::string ovName = item.value("overrideMaterialId", "");
+                    if (!ovName.empty()) ovMat = materials->GetId(ovName);
+                }
+                SpawnInstance(pid, pos, rot, scale, spatialGrid, ovMat);
             }
         }
 
@@ -440,12 +595,20 @@ namespace AsciiEngine {
                     if ((dx * dx + dy * dy) < (clearRadius * clearRadius)) {
                         continue;
                     }
+                    // para que los pinos aleatorios nunca nazcan dentro de un lago/río/mar
+                    if (FindSurfaceZoneAt(wx, wy)) continue;
+
+                    if (IsNearAnyWater(wx, wy, 1.5f)) {
+                        continue;
+                    }
 
                     float s = MathIso::Lerp(scaleMin, scaleMax, hs);
                     SpawnInstance(pid, { wx, wy, 0.0f }, hr * 360.0f, { s, s, s }, spatialGrid);
                 }
             }
         }
+
+        RebuildGroundMask(0.5f);
 
         TraceLog(LOG_INFO, "WORLD: Mapa '%s' cargado con %zu instancias en %u chunks.",
             mapPath.c_str(), m_instances.size(), spatialGrid.GetTotalChunks());
@@ -470,4 +633,333 @@ namespace AsciiEngine {
         return total;
     }
 
+
+    const WaterZone* World::FindWaterZoneAt(float worldX, float worldY) const {
+        for (const WaterZone& wz : m_waterZones) {
+            if (wz.Contains(worldX, worldY)) {
+                return &wz;
+            }
+        }
+        return nullptr;
+    }
+
+    bool World::IsNearAnyWater(float worldX, float worldY, float margin) const {
+        for (const WaterZone& wz : m_waterZones) {
+            if (worldX >= wz.minX - margin && worldX <= wz.maxX + margin &&
+                worldY >= wz.minY - margin && worldY <= wz.maxY + margin) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    const SurfaceZone* World::FindSurfaceZoneAt(float worldX, float worldY) const {
+        for (const SurfaceZone& sz : m_surfaceZones) {
+            if (sz.Contains(worldX, worldY)) {
+                return &sz;
+            }
+        }
+        return nullptr;
+    }
+
+    void World::StampRectMask(float minX, float maxX, float minY, float maxY, uint8_t flag) {
+        int gx0 = std::max(0, static_cast<int>(std::floor((minX - m_maskOriginX) * m_maskInvCellSize)));
+        int gx1 = std::min(m_maskWidth - 1, static_cast<int>(std::floor((maxX - m_maskOriginX) * m_maskInvCellSize)));
+        int gy0 = std::max(0, static_cast<int>(std::floor((minY - m_maskOriginY) * m_maskInvCellSize)));
+        int gy1 = std::min(m_maskHeight - 1, static_cast<int>(std::floor((maxY - m_maskOriginY) * m_maskInvCellSize)));
+
+        for (int gy = gy0; gy <= gy1; ++gy) {
+            size_t rowOff = static_cast<size_t>(gy) * static_cast<size_t>(m_maskWidth);
+            for (int gx = gx0; gx <= gx1; ++gx) {
+                m_groundMask[rowOff + static_cast<size_t>(gx)] |= flag;
+            }
+        }
+    }
+
+    void World::StampCircleMask(float cx, float cy, float radius, uint8_t flag) {
+        int gx0 = std::max(0, static_cast<int>(std::floor((cx - radius - m_maskOriginX) * m_maskInvCellSize)));
+        int gx1 = std::min(m_maskWidth - 1, static_cast<int>(std::floor((cx + radius - m_maskOriginX) * m_maskInvCellSize)));
+        int gy0 = std::max(0, static_cast<int>(std::floor((cy - radius - m_maskOriginY) * m_maskInvCellSize)));
+        int gy1 = std::min(m_maskHeight - 1, static_cast<int>(std::floor((cy + radius - m_maskOriginY) * m_maskInvCellSize)));
+
+        const float rSq = radius * radius;
+        for (int gy = gy0; gy <= gy1; ++gy) {
+            float wy = m_maskOriginY + (static_cast<float>(gy) + 0.5f) * m_maskCellSize;
+            float dy = wy - cy;
+            size_t rowOff = static_cast<size_t>(gy) * static_cast<size_t>(m_maskWidth);
+            for (int gx = gx0; gx <= gx1; ++gx) {
+                float wx = m_maskOriginX + (static_cast<float>(gx) + 0.5f) * m_maskCellSize;
+                float dx = wx - cx;
+                if ((dx * dx + dy * dy) <= rSq) {
+                    m_groundMask[rowOff + static_cast<size_t>(gx)] |= flag;
+                }
+            }
+        }
+    }
+
+    void World::StampOBBMask(float cx, float cy, Vec2 halfSize, float cosRot, float sinRot, uint8_t flag) {
+        float boundR = std::sqrt(halfSize.x * halfSize.x + halfSize.y * halfSize.y) + m_maskCellSize;
+        int gx0 = std::max(0, static_cast<int>(std::floor((cx - boundR - m_maskOriginX) * m_maskInvCellSize)));
+        int gx1 = std::min(m_maskWidth - 1, static_cast<int>(std::floor((cx + boundR - m_maskOriginX) * m_maskInvCellSize)));
+        int gy0 = std::max(0, static_cast<int>(std::floor((cy - boundR - m_maskOriginY) * m_maskInvCellSize)));
+        int gy1 = std::min(m_maskHeight - 1, static_cast<int>(std::floor((cy + boundR - m_maskOriginY) * m_maskInvCellSize)));
+
+        for (int gy = gy0; gy <= gy1; ++gy) {
+            float wy = m_maskOriginY + (static_cast<float>(gy) + 0.5f) * m_maskCellSize;
+            float ry = wy - cy;
+            size_t rowOff = static_cast<size_t>(gy) * static_cast<size_t>(m_maskWidth);
+            for (int gx = gx0; gx <= gx1; ++gx) {
+                float wx = m_maskOriginX + (static_cast<float>(gx) + 0.5f) * m_maskCellSize;
+                float rx = wx - cx;
+                // Rotacion inversa al espacio local del OBB.
+                float lx = rx * cosRot + ry * sinRot;
+                float ly = -rx * sinRot + ry * cosRot;
+                if (std::abs(lx) <= halfSize.x && std::abs(ly) <= halfSize.y) {
+                    m_groundMask[rowOff + static_cast<size_t>(gx)] |= flag;
+                }
+            }
+        }
+    }
+
+    void World::RebuildGroundMask(float cellSizeWorld) {
+        m_maskCellSize = std::max(0.25f, cellSizeWorld);
+        m_maskInvCellSize = 1.0f / m_maskCellSize;
+
+        const float halfSize = m_worldHalfSize + 4.0f;
+        m_maskOriginX = -halfSize;
+        m_maskOriginY = -halfSize;
+        m_maskWidth = static_cast<int>(std::ceil((halfSize * 2.0f) * m_maskInvCellSize));
+        m_maskHeight = m_maskWidth;
+
+        m_groundMask.assign(static_cast<size_t>(m_maskWidth) * static_cast<size_t>(m_maskHeight), GroundMaskFlags::CLEAR);
+
+        // 1. Estampar huellas de objetos del mapa (rocas, arboles, muros, estructuras).
+        for (const MapInstance& inst : m_instances) {
+            const BakedPrefab* prefab = GetPrefab(inst.prefabId);
+            if (!prefab) continue;
+
+            const ColliderDef& col = prefab->collider;
+            if (col.type == ColliderType::CIRCLE) {
+                float r = col.radius * ((inst.scale.x + inst.scale.y) * 0.5f) + 0.45f;
+                StampCircleMask(inst.position.x, inst.position.y, r, GroundMaskFlags::OBJECT_FOOTPRINT);
+            }
+            else if (col.type == ColliderType::BOX) {
+                Vec2 hs = { col.halfSize.x * inst.scale.x + 0.35f, col.halfSize.y * inst.scale.y + 0.35f };
+                StampOBBMask(inst.position.x, inst.position.y, hs, inst.cosRot, inst.sinRot, GroundMaskFlags::OBJECT_FOOTPRINT);
+            }
+            else if (col.type == ColliderType::ARCH_PILLARS) {
+                // Estampamos ambos pilares laterales del arco (dejando el pasillo central libre).
+                float totalW = (col.halfSize.x * 2.0f) * inst.scale.x;
+                float openW = col.openingWidth * inst.scale.x;
+                float pillarW = std::max(0.2f, (totalW - openW) * 0.5f);
+                float offsetDist = (openW * 0.5f) + (pillarW * 0.5f);
+                Vec2  pillarHalf = { pillarW * 0.5f + 0.3f, col.halfSize.y * inst.scale.y + 0.3f };
+
+                StampOBBMask(inst.position.x - inst.cosRot * offsetDist, inst.position.y - inst.sinRot * offsetDist,
+                    pillarHalf, inst.cosRot, inst.sinRot, GroundMaskFlags::OBJECT_FOOTPRINT);
+                StampOBBMask(inst.position.x + inst.cosRot * offsetDist, inst.position.y + inst.sinRot * offsetDist,
+                    pillarHalf, inst.cosRot, inst.sinRot, GroundMaskFlags::OBJECT_FOOTPRINT);
+            }
+            else {
+                // Objeto decorativo sin colision: estampamos un radio base conservador.
+                float r = prefab->boundRadiusXY * std::max(inst.scale.x, inst.scale.y) * 0.45f;
+                StampCircleMask(inst.position.x, inst.position.y, r, GroundMaskFlags::OBJECT_FOOTPRINT);
+            }
+        }
+
+        // 2. Estampar zonas de agua (con margen suave de orilla).
+        for (const WaterZone& wz : m_waterZones) {
+            StampRectMask(wz.minX - 0.35f, wz.maxX + 0.35f, wz.minY - 0.35f, wz.maxY + 0.35f, GroundMaskFlags::WATER);
+        }
+
+        // 3. Estampar objetos de suelo transitables que suprimen vegetacion natural.
+        for (const SurfaceZone& sz : m_surfaceZones) {
+            if (sz.suppressFoliage) {
+                StampRectMask(sz.minX - 0.2f, sz.maxX + 0.2f, sz.minY - 0.2f, sz.maxY + 0.2f, GroundMaskFlags::SURFACE_OVERRIDE);
+            }
+        }
+    }
+
+    bool World::CanSpawnGroundFoliageAt(float worldX, float worldY) const {
+        if (m_groundMask.empty()) return true;
+        int gx = static_cast<int>(std::floor((worldX - m_maskOriginX) * m_maskInvCellSize));
+        int gy = static_cast<int>(std::floor((worldY - m_maskOriginY) * m_maskInvCellSize));
+        if (gx < 0 || gx >= m_maskWidth || gy < 0 || gy >= m_maskHeight) {
+            return false;
+        }
+        return m_groundMask[static_cast<size_t>(gy) * static_cast<size_t>(m_maskWidth) + static_cast<size_t>(gx)] == GroundMaskFlags::CLEAR;
+    }
+
+    void World::RebuildSpatialGrid(SpatialHashGrid& spatialGrid) const {
+        spatialGrid.Reset(m_chunkSize, m_instances.size());
+        for (uint32_t i = 0; i < static_cast<uint32_t>(m_instances.size()); ++i) {
+            const MapInstance& inst = m_instances[i];
+            const BakedPrefab* prefab = GetPrefab(inst.prefabId);
+            if (!prefab) continue;
+            float maxScaleXY = std::max(inst.scale.x, inst.scale.y);
+            spatialGrid.InsertInstance(i, inst.position.x, inst.position.y, prefab->boundRadiusXY * maxScaleXY);
+        }
+    }
+
+    bool World::RemoveInstance(size_t index, SpatialHashGrid& spatialGrid) {
+        if (index >= m_instances.size()) return false;
+        m_instances.erase(m_instances.begin() + static_cast<ptrdiff_t>(index));
+        RebuildSpatialGrid(spatialGrid);
+        return true;
+    }
+
+    bool World::InsertInstanceAt(size_t index, const MapInstance& inst, SpatialHashGrid& spatialGrid) {
+        if (index > m_instances.size()) index = m_instances.size();
+        m_instances.insert(m_instances.begin() + static_cast<ptrdiff_t>(index), inst);
+        RebuildSpatialGrid(spatialGrid);
+        return true;
+    }
+
+    bool World::UpdateInstanceTransform(size_t index, Vec3 pos, float rotDeg, Vec3 scale,
+        MaterialId overrideMat, SpatialHashGrid& spatialGrid) {
+        if (index >= m_instances.size()) return false;
+        MapInstance& inst = m_instances[index];
+        float rad = rotDeg * DEG_TO_RAD;
+        inst.position = pos;
+        inst.rotationDeg = rotDeg;
+        inst.cosRot = std::cos(rad);
+        inst.sinRot = std::sin(rad);
+        inst.scale = scale;
+        inst.overrideMaterialId = overrideMat;
+        RebuildSpatialGrid(spatialGrid);
+        return true;
+    }
+
+    bool World::SaveMapToFile(const std::string& mapPath,
+        const MaterialSystem& materials,
+        const DayNightConfig& dayNight,
+        const GlobalIlluminationConfig& gi,
+        const std::vector<PointLight>& lights,
+        const WorldWindConfig& wind,
+        const std::string& biomeId,
+        const std::string& weatherId,
+        bool randomWeather,
+        float viewPaddingPx,
+        const std::vector<EntitySpawnDef>& entities) const {
+        json root;
+
+        // 1. Configuracion global del mundo.
+        root["worldConfig"] = {
+            { "worldHalfSize", m_worldHalfSize },
+            { "biomeId", biomeId },
+            { "playerSpawn",{ { "x", m_playerSpawn.x },{ "y", m_playerSpawn.y } } },
+            { "culling",{ { "chunkSize", m_chunkSize },{ "viewPadding", viewPaddingPx } } },
+            { "dayNightCycle",{
+                { "enabled", dayNight.enabled },
+                { "currentTimeHours", dayNight.currentTimeHours },
+                { "dayLengthSeconds", dayNight.dayLengthSeconds }
+            } },
+            { "globalIllumination",{
+                { "skyColor", ColorToHex(gi.skyColor) },
+                { "groundColor", ColorToHex(gi.groundColor) },
+                { "ambientStrength", gi.ambientStrength }
+            } },
+            { "wind",{
+                { "directionDeg", wind.directionDeg },
+                { "baseSpeed", wind.baseSpeed },
+                { "gustStrength", wind.gustStrength }
+            } },
+            { "weather",{
+                { "currentWeatherId", weatherId },
+                { "randomTransitionsEnabled", randomWeather }
+            } }
+        };
+
+        // 2. Zonas de agua.
+        json waterArr = json::array();
+        for (const WaterZone& wz : m_waterZones) {
+            waterArr.push_back({
+                { "minX", wz.minX },{ "maxX", wz.maxX },
+                { "minY", wz.minY },{ "maxY", wz.maxY },
+                { "deepColor", ColorToHex(wz.deepColor) },
+                { "shallowColor", ColorToHex(wz.shallowColor) },
+                { "waveSpeed", wz.waveSpeed }
+                });
+        }
+        root["waterZones"] = waterArr;
+
+        // 3. Superficies transitables (puentes, patios, pisos).
+        json surfArr = json::array();
+        for (const SurfaceZone& sz : m_surfaceZones) {
+            const char* patStr = "GRID";
+            if (sz.pattern == SurfacePattern::PLANKS_X) patStr = "PLANKS_X";
+            else if (sz.pattern == SurfacePattern::PLANKS_Y) patStr = "PLANKS_Y";
+            else if (sz.pattern == SurfacePattern::CHECKER)  patStr = "CHECKER";
+            else if (sz.pattern == SurfacePattern::NOISE)    patStr = "NOISE";
+
+            surfArr.push_back({
+                { "id", sz.id },
+                { "minX", sz.minX },{ "maxX", sz.maxX },
+                { "minY", sz.minY },{ "maxY", sz.maxY },
+                { "elevationZ", sz.elevationZ },
+                { "primaryColor", ColorToHex(sz.primaryColor) },
+                { "secondaryColor", ColorToHex(sz.secondaryColor) },
+                { "glyphs", sz.glyphs },
+                { "pattern", patStr },
+                { "suppressFoliage", sz.suppressFoliage },
+                { "walkableOverWater", sz.walkableOverWater }
+                });
+        }
+        root["surfaceZones"] = surfArr;
+
+        // 4. Luces estaticas y parpadeantes.
+        json lightArr = json::array();
+        for (const PointLight& pl : lights) {
+            lightArr.push_back({
+                { "pos",{ { "x", pl.position.x },{ "y", pl.position.y },{ "z", pl.position.z } } },
+                { "color", ColorToHex(pl.color) },
+                { "intensity", pl.intensity },
+                { "radius", pl.radius },
+                { "flicker", pl.flicker }
+                });
+        }
+        root["lights"] = lightArr;
+
+        // 5. Personajes / entidades colocadas.
+        json entArr = json::array();
+        for (const EntitySpawnDef& e : entities) {
+            entArr.push_back({
+                { "characterId", e.characterId },
+                { "pos",{ { "x", e.position.x },{ "y", e.position.y },{ "z", 0.0f } } },
+                { "facingDeg", e.facingDeg },
+                { "isPlayer", e.isPlayer },
+                { "wanderRadius", e.wanderRadius },
+                { "scale", e.scale }
+                });
+        }
+        root["entities"] = entArr;
+
+        // 6. Todas las instancias explicitas (conserva exactamente lo editado al recargar).
+        json instArr = json::array();
+        for (const MapInstance& inst : m_instances) {
+            const BakedPrefab* p = GetPrefab(inst.prefabId);
+            if (!p) continue;
+            json entry = {
+                { "prefabId", p->id },
+                { "pos",{ { "x", inst.position.x },{ "y", inst.position.y },{ "z", inst.position.z } } },
+                { "rotDeg", inst.rotationDeg },
+                { "scale",{ { "x", inst.scale.x },{ "y", inst.scale.y },{ "z", inst.scale.z } } }
+            };
+            if (inst.overrideMaterialId != FALLBACK_MATERIAL_ID) {
+                entry["overrideMaterialId"] = materials.Get(inst.overrideMaterialId).name;
+            }
+            instArr.push_back(std::move(entry));
+        }
+        root["instances"] = instArr;
+
+        std::ofstream out(mapPath);
+        if (!out.is_open()) {
+            TraceLog(LOG_ERROR, "WORLD: No se pudo escribir el mapa JSON en %s", mapPath.c_str());
+            return false;
+        }
+        out << root.dump(2);
+        TraceLog(LOG_INFO, "WORLD: Mapa guardado en %s (%zu instancias, %zu luces, %zu entidades).",
+            mapPath.c_str(), m_instances.size(), lights.size(), entities.size());
+        return true;
+    }
 } // namespace AsciiEngine

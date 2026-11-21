@@ -30,6 +30,13 @@ namespace AsciiEngine {
         // Carga las instancias del mapa JSON y construye el SpatialHashGrid.
         bool LoadMap(const std::string& mapPath);
 
+        // Guarda el mapa desde el editor a un JSON
+        bool SaveMap(const std::string& mapPath) const;
+
+        // Utilidades del editor de mapas
+        void ToggleEditorMode();
+        void ToggleDebugHUD();
+
         // Indica si la ventana sigue abierta.
         bool IsRunning() const;
 

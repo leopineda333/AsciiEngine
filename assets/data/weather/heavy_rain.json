@@ -1,0 +1,18 @@
+{
+  "id": "heavy_rain",
+  "name": "Tormenta",
+  "transitionDuration": 4.0,
+  "bgTint": "#1D2632",
+  "bgTintBlend": 0.60,
+  "sunMultiplier": 0.45,
+  "ambientMultiplier": 0.75,
+  "windSpeedRange": {
+    "min": 5.5,
+    "max": 8.5
+  },
+  "windGustStrength": 1.6,
+  "snowTargetCoverage": 0.0,
+  "snowChangeRate": 0.18,
+  "particleTemplateId": "rain_streaks",
+  "weatherParticleRate": 620.0
+}

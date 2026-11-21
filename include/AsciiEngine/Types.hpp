@@ -1,13 +1,12 @@
 /**
  * @file Types.hpp
- * @brief Tipos matematicos, geometricos y de telemetria puros del motor.
- *
- * @details Ningun tipo aqui depende de Raylib ni de la API de Windows para mantener
- * encapsulado el motor detras del patron Facade.
+ * @brief Tipos matematicos, geometricos, ambientales, de LOD ambiental y de telemetria puros del motor.
  */
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
+#include <string>
 
 namespace AsciiEngine {
 
@@ -31,7 +30,6 @@ namespace AsciiEngine {
         float width = 0.0f;
         float height = 0.0f;
 
-        // Comprueba interseccion AABB vs AABB en O(1) sin ramificaciones costosas.
         bool Intersects(const Rect2D& other) const {
             return (x < other.x + other.width) && (x + width > other.x) &&
                 (y < other.y + other.height) && (y + height > other.y);
@@ -46,14 +44,50 @@ namespace AsciiEngine {
         uint8_t a = 255;
     };
 
-    // Identificador numerico de material (2 bytes). Evita comparar strings en el render loop.
     using MaterialId = uint16_t;
     constexpr MaterialId FALLBACK_MATERIAL_ID = 0;
 
-    // Modo de distribucion espacial de los atomos al hornear geometria.
     enum class GridMode : uint8_t {
         REGULAR = 0, // Paso uniforme exacto (solidos, metales, muros).
         NOISY = 1  // Perturbacion determinista y porosidad (hojas, piedra, nieve).
+    };
+
+    // Estado instantaneo del campo vectorial de viento (compartido por follaje y particulas).
+    struct WindState {
+        float dirX = 0.7071f;
+        float dirY = 0.7071f;
+        float speed = 2.2f;
+        float gustStrength = 1.0f;
+        float time = 0.0f;
+        float phase1 = 0.0f; // Fase integrada continuamente (cero sacudidas al cambiar clima).
+        float phase2 = 0.0f;
+    };
+    // Perfil dinamico de LOD de efectos segun zoom y distancia a la camara.
+    struct EffectLodState {
+        float densityScale = 1.0f;  // [0.35 .. 1.0] escala particulas y follaje de suelo.
+        float windEffectRadiusSq = 900.0f; // Radio^2 en mundo donde los arboles calculan viento.
+        float foliageRadiusWorld = 26.0f; // Radio en mundo donde se simula pasto/flores interactivas.
+        int   particleRenderStride = 1;     // 1 = todas las particulas; 2 = mitad al alejar camara.
+        int   distantAtomStride = 1;     // 1 normal; 2 para objetos en los bordes lejanos.
+        bool  allowReflections = true;
+    };
+
+    // Modificadores atmosfericos y de suelo del bioma (100% POD: cero asignaciones al copiar).
+    struct WeatherModifiers {
+        ColorRGBA biomeGroundColor = { 74, 98, 72, 255 };
+        ColorRGBA biomeAltGroundColor = { 58, 78, 56, 255 };
+        ColorRGBA bgTint = { 50, 54, 60, 255 };
+        float     bgTintBlend = 0.0f;
+        float     sunMultiplier = 1.0f;
+        float     ambientMultiplier = 1.0f;
+        float     snowCoverage = 0.0f;
+
+        // Glifos y densidad del suelo definidos por el JSON del bioma activo.
+        char      groundGlyphs[8] = { '.', ',', '\'' };
+        uint8_t   groundGlyphCount = 3;
+        char      shadowGlyphs[8] = { ':', ';', ',' };
+        uint8_t   shadowGlyphCount = 3;
+        float     groundDensity = 0.35f;
     };
 
     // Instantanea de telemetria recopilada en cada frame para la vista de Debug (F3).
@@ -71,25 +105,53 @@ namespace AsciiEngine {
         uint32_t totalChunks = 0;
         uint32_t activeChunks = 0;
         uint32_t totalInstances = 0;
-        uint32_t instancesEvaluated = 0; // Sobrevivieron a Capa 1 (Spatial Hash)
-        uint32_t instancesRendered = 0; // Sobrevivieron a Capa 2 (Frustum 2D)
-        uint32_t atomsEvaluated = 0; // Atomos enviados al Z-Buffer
-        uint32_t atomsCulledScreen = 0; // Descartados en Capa 3 (fuera de pantalla)
-        uint32_t glyphsRendered = 0; // Celdas ocupadas dibujadas (Zero Overdraw)
-        uint32_t outlineCellsDrawn = 0; // Celdas de contorno que recibieron borde negro
+        uint32_t instancesEvaluated = 0;
+        uint32_t instancesRendered = 0;
+        uint32_t atomsEvaluated = 0;
+        uint32_t atomsCulledScreen = 0;
+        uint32_t glyphsRendered = 0;
+        uint32_t outlineCellsDrawn = 0;
+        uint32_t groundFoliageDrawn = 0;
 
-        // Memoria (RAM real del proceso + memoria de subsistemas clave).
-        float    processRamMB = 0.0f;
-        size_t   zBufferBytes = 0;
-        size_t   spatialGridBytes = 0;
-        size_t   bakedCloudBytes = 0;
+        // Memoria (RAM real del proceso + subsistemas clave).
+        float  processRamMB = 0.0f;
+        size_t zBufferBytes = 0;
+        size_t spatialGridBytes = 0;
+        size_t bakedCloudBytes = 0;
+        size_t heightfieldBytes = 0;
+        size_t particlePoolBytes = 0;
+        size_t groundMaskBytes = 0;
 
-        // Estado de escena y resolucion de grilla.
-        Vec2     cameraWorldPos = {};
-        float    cameraZoom = 1.0f;
-        int      gridWidth = 0;
-        int      gridHeight = 0;
-        bool     outlinesActive = true;
+        // Estado de iluminacion y ciclo dia/noche (Fase 4).
+        float    timeOfDayHours = 12.0f;
+        bool     isNight = false;
+        bool     dayCycleRunning = true;
+        bool     shadowsEnabled = true;
+        bool     torchEnabled = true;
+        uint32_t activePointLights = 0;
+        uint32_t totalMapLights = 0;
+
+        // Estado de Bioma, Clima, Viento y Particulas (Fase 5).
+        std::string biomeName = "Default";
+        std::string weatherName = "Clear";
+        bool        randomWeatherOn = true;
+        float       nextWeatherSec = 0.0f;
+        float       windSpeed = 0.0f;
+        float       snowCoverage = 0.0f;
+        float       effectLodScale = 1.0f;
+        uint32_t    activeParticles = 0;
+        uint32_t    maxParticles = 0;
+
+        // Estado del sistema de personajes modulares (Fase 6).
+        uint32_t    activeCharacters = 0;
+        std::string controlledCharName = "None";
+        std::string controlledAnimState = "IDLE";
+
+        Vec2  cameraWorldPos = {};
+        float cameraZoom = 1.0f;
+        int   gridWidth = 0;
+        int   gridHeight = 0;
+        bool  outlinesActive = true;
     };
 
 } // namespace AsciiEngine

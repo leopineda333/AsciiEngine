@@ -1,0 +1,18 @@
+{
+  "id": "clear_day",
+  "name": "Despejado",
+  "transitionDuration": 4.5,
+  "bgTint": "#32363C",
+  "bgTintBlend": 0.0,
+  "sunMultiplier": 1.0,
+  "ambientMultiplier": 1.0,
+  "windSpeedRange": {
+    "min": 1.6,
+    "max": 3.0
+  },
+  "windGustStrength": 0.9,
+  "snowTargetCoverage": 0.0,
+  "snowChangeRate": 0.10,
+  "particleTemplateId": "",
+  "weatherParticleRate": 0.0
+}

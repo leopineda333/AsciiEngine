@@ -1,0 +1,245 @@
+{
+  "id": "wolf_quadruped",
+  "name": "Lobo Gris",
+  "collisionRadius": 0.78,
+  "walkSpeed": 14.5,
+  "runSpeed": 25.0,
+  "baseElevationZ": 0.0,
+  "sections": [
+    {
+      "id": "body",
+      "parentId": "",
+      "materialId": "fur_wolf",
+      "shape": "ELLIPSOID",
+      "size": {
+        "x": 1.65,
+        "y": 0.68,
+        "z": 0.66
+      },
+      "localOffset": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.92
+      },
+      "cellScale": 0.15,
+      "animTracks": {
+        "IDLE": {
+          "posAxis": "Z",
+          "posAmplitude": 0.03,
+          "frequency": 3.0,
+          "phaseOffset": 0.0
+        },
+        "WALK": {
+          "posAxis": "Z",
+          "posAmplitude": 0.07,
+          "frequency": 13.0,
+          "phaseOffset": 0.0
+        },
+        "ATTACK": {
+          "rotAxis": "Y",
+          "rotAmpDeg": 22.0,
+          "frequency": 13.0,
+          "phaseOffset": 0.0
+        }
+      }
+    },
+    {
+      "id": "head",
+      "parentId": "body",
+      "materialId": "fur_wolf",
+      "shape": "ELLIPSOID",
+      "size": {
+        "x": 0.68,
+        "y": 0.52,
+        "z": 0.50
+      },
+      "localOffset": {
+        "x": 0.88,
+        "y": 0.0,
+        "z": 0.24
+      },
+      "cellScale": 0.13,
+      "animTracks": {
+        "IDLE": {
+          "rotAxis": "Y",
+          "rotAmpDeg": 8.0,
+          "frequency": 1.8,
+          "phaseOffset": 0.4
+        }
+      }
+    },
+    {
+      "id": "snout",
+      "parentId": "head",
+      "materialId": "stone_granite",
+      "shape": "BOX",
+      "size": {
+        "x": 0.42,
+        "y": 0.26,
+        "z": 0.24
+      },
+      "localOffset": {
+        "x": 0.36,
+        "y": 0.0,
+        "z": -0.06
+      },
+      "cellScale": 0.12
+    },
+    {
+      "id": "tail",
+      "parentId": "body",
+      "materialId": "fur_wolf",
+      "shape": "CONE",
+      "size": {
+        "x": 0.28,
+        "y": 0.28,
+        "z": 0.85
+      },
+      "localOffset": {
+        "x": -0.78,
+        "y": 0.0,
+        "z": 0.16
+      },
+      "pivotOffset": {
+        "x": -0.35,
+        "y": 0.0,
+        "z": 0.15
+      },
+      "cellScale": 0.14,
+      "animTracks": {
+        "IDLE": {
+          "rotAxis": "Z",
+          "rotAmpDeg": 24.0,
+          "frequency": 4.8,
+          "phaseOffset": 0.0
+        },
+        "WALK": {
+          "rotAxis": "Z",
+          "rotAmpDeg": 32.0,
+          "frequency": 8.5,
+          "phaseOffset": 0.0
+        }
+      }
+    },
+    {
+      "id": "leg_fl",
+      "parentId": "body",
+      "materialId": "fur_wolf",
+      "shape": "CYLINDER",
+      "size": {
+        "x": 0.22,
+        "y": 0.22,
+        "z": 0.78
+      },
+      "localOffset": {
+        "x": 0.48,
+        "y": 0.26,
+        "z": -0.10
+      },
+      "pivotOffset": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": -0.38
+      },
+      "cellScale": 0.13,
+      "animTracks": {
+        "WALK": {
+          "rotAxis": "Y",
+          "rotAmpDeg": 36.0,
+          "frequency": 8.5,
+          "phaseOffset": 0.0
+        }
+      }
+    },
+    {
+      "id": "leg_fr",
+      "parentId": "body",
+      "materialId": "fur_wolf",
+      "shape": "CYLINDER",
+      "size": {
+        "x": 0.22,
+        "y": 0.22,
+        "z": 0.78
+      },
+      "localOffset": {
+        "x": 0.48,
+        "y": -0.26,
+        "z": -0.10
+      },
+      "pivotOffset": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": -0.38
+      },
+      "cellScale": 0.13,
+      "animTracks": {
+        "WALK": {
+          "rotAxis": "Y",
+          "rotAmpDeg": 36.0,
+          "frequency": 8.5,
+          "phaseOffset": 3.14159
+        }
+      }
+    },
+    {
+      "id": "leg_bl",
+      "parentId": "body",
+      "materialId": "fur_wolf",
+      "shape": "CYLINDER",
+      "size": {
+        "x": 0.24,
+        "y": 0.24,
+        "z": 0.78
+      },
+      "localOffset": {
+        "x": -0.50,
+        "y": 0.26,
+        "z": -0.10
+      },
+      "pivotOffset": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": -0.38
+      },
+      "cellScale": 0.13,
+      "animTracks": {
+        "WALK": {
+          "rotAxis": "Y",
+          "rotAmpDeg": 36.0,
+          "frequency": 8.5,
+          "phaseOffset": 3.14159
+        }
+      }
+    },
+    {
+      "id": "leg_br",
+      "parentId": "body",
+      "materialId": "fur_wolf",
+      "shape": "CYLINDER",
+      "size": {
+        "x": 0.24,
+        "y": 0.24,
+        "z": 0.78
+      },
+      "localOffset": {
+        "x": -0.50,
+        "y": -0.26,
+        "z": -0.10
+      },
+      "pivotOffset": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": -0.38
+      },
+      "cellScale": 0.13,
+      "animTracks": {
+        "WALK": {
+          "rotAxis": "Y",
+          "rotAmpDeg": 36.0,
+          "frequency": 8.5,
+          "phaseOffset": 0.0
+        }
+      }
+    }
+  ]
+}

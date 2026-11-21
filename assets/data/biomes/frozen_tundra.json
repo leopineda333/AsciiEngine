@@ -1,0 +1,55 @@
+{
+  "id": "frozen_tundra",
+  "name": "Tundra Helada",
+  "ground": {
+    "baseColor": "#869AAF",
+    "altColor": "#62768A",
+    "glyphs": ".:*-",
+    "shadowGlyphs": ":;=",
+    "density": 0.52
+  },
+  "groundFoliage": [
+    {
+      "id": "frost_grass",
+      "isTallBlade": true,
+      "glyphs": "|",
+      "baseColor": "#4F6A6E",
+      "tipColor": "#A5C4C9",
+      "spawnChance": 0.11,
+      "heightZ": 0.50,
+      "windWeight": 1.15,
+      "minBlades": 1,
+      "maxBlades": 3,
+      "clumpSpread": 0.75,
+      "interactive": true
+    },
+    {
+      "id": "ice_bloom",
+      "isTallBlade": false,
+      "glyphs": "*+",
+      "baseColor": "#4F6A6E",
+      "tipColor": "#9CE8FF",
+      "spawnChance": 0.015,
+      "heightZ": 0.45,
+      "windWeight": 0.60,
+      "minBlades": 1,
+      "maxBlades": 3,
+      "clumpSpread": 0.75,
+      "interactive": true
+    }
+  ],
+  "baseSnowCoverage": 0.75,
+  "windMultiplier": 1.45,
+  "minStateSeconds": 30.0,
+  "maxStateSeconds": 55.0,
+  "weatherTransitions": [
+    {
+      "targetWeather": "blizzard",
+      "probability": 0.65
+    },
+    {
+      "targetWeather": "clear_day",
+      "probability": 0.35
+    }
+  ]
+}

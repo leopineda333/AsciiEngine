@@ -53,6 +53,26 @@ namespace AsciiEngine::MathIso {
         return Fract(std::sin(p) * 43758.5453f);
     }
 
+    float ValueNoise2D(float x, float y, float seed) {
+        float ix = std::floor(x);
+        float iy = std::floor(y);
+        float fx = x - ix;
+        float fy = y - iy;
+
+        // Curva Hermite (smoothstep) para evitar esquinas visibles entre celdas de ruido.
+        float ux = fx * fx * (3.0f - 2.0f * fx);
+        float uy = fy * fy * (3.0f - 2.0f * fy);
+
+        float v00 = Hash3D(ix, iy, 0.0f, seed);
+        float v10 = Hash3D(ix + 1.0f, iy, 0.0f, seed);
+        float v01 = Hash3D(ix, iy + 1.0f, 0.0f, seed);
+        float v11 = Hash3D(ix + 1.0f, iy + 1.0f, 0.0f, seed);
+
+        float nx0 = Lerp(v00, v10, ux);
+        float nx1 = Lerp(v01, v11, ux);
+        return Lerp(nx0, nx1, uy);
+    }
+
     float EllipsoidMetric(const Vec3& localPos, const Vec3& radii) {
         // Ecuacion implicita: (x/rx)^2 + (y/ry)^2 + (z/rz)^2 <= 1
         float nx = localPos.x / radii.x;
