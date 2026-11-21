@@ -698,4 +698,37 @@ namespace AsciiEngine {
         return total;
     }
 
+    bool CharacterSystem::RemoveCharacter(size_t index) {
+        if (index >= m_instances.size()) return false;
+        m_instances.erase(m_instances.begin() + static_cast<ptrdiff_t>(index));
+        if (m_instances.empty()) {
+            m_controlledIdx = 0;
+        }
+        else {
+            if (m_controlledIdx >= m_instances.size()) {
+                m_controlledIdx = m_instances.size() - 1;
+            }
+            m_instances[m_controlledIdx].isPlayer = true;
+        }
+        return true;
+    }
+
+    std::vector<EntitySpawnDef> CharacterSystem::ExportEntitySpawns() const {
+        std::vector<EntitySpawnDef> out;
+        out.reserve(m_instances.size());
+
+        for (const CharacterInstance& inst : m_instances) {
+            if (inst.templateId >= m_templates.size()) continue;
+            EntitySpawnDef def;
+            def.characterId = m_templates[inst.templateId].id;
+            def.position = inst.actor.position;
+            def.facingDeg = inst.actor.facingAngleRad / DEG_TO_RAD;
+            def.scale = inst.scale;
+            def.wanderRadius = inst.wanderRadius;
+            def.isPlayer = inst.isPlayer;
+            out.push_back(std::move(def));
+        }
+        return out;
+    }
+
 } // namespace AsciiEngine

@@ -101,6 +101,18 @@ namespace AsciiEngine {
         // Avanza transiciones climaticas, acumulacion de nieve, temporizador de Markov y campo de viento.
         void Update(float dt);
 
+        // Accesores de edicion en vivo para el Editor de Mapas (Fase 7).
+        const std::vector<BiomeDef>& GetBiomes() const { return m_biomes; }
+        const std::vector<WeatherDef>& GetWeathers() const { return m_weathers; }
+        std::string GetActiveBiomeId() const;
+        std::string GetActiveWeatherId() const;
+        void        SetBiomeByIndex(size_t idx);
+        void        SetRandomTransitions(bool on) { m_randomTransitions = on; }
+        void        SetWindDirectionDeg(float deg);
+        float       GetWindDirectionDeg() const;
+        void        SetWindBaseSpeed(float speed);
+        void        SetWindGustStrength(float gust);
+
         // Evalua el desplazamiento XY por onda de viento para un atomo de follaje segun su altura [0..1].
         Vec2 SampleWindOffset(float worldX, float worldY, float heightNorm, float windWeight) const;
 

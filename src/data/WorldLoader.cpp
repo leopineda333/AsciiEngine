@@ -293,6 +293,15 @@ namespace AsciiEngine {
             return col;
         }
 
+        std::string ColorToHex(const ColorRGBA& c) {
+            static constexpr char kHex[] = "0123456789ABCDEF";
+            std::string out = "#000000";
+            out[1] = kHex[(c.r >> 4) & 0xF]; out[2] = kHex[c.r & 0xF];
+            out[3] = kHex[(c.g >> 4) & 0xF]; out[4] = kHex[c.g & 0xF];
+            out[5] = kHex[(c.b >> 4) & 0xF]; out[6] = kHex[c.b & 0xF];
+            return out;
+        }
+
     } // namespace anonimo
 
     bool World::LoadObjectsDirectory(const std::string& objectsDir, const MaterialSystem& materials) {
@@ -374,7 +383,7 @@ namespace AsciiEngine {
         return id;
     }
 
-    bool World::LoadMapFromFile(const std::string& mapPath, SpatialHashGrid& spatialGrid) {
+    bool World::LoadMapFromFile(const std::string& mapPath, SpatialHashGrid& spatialGrid, const MaterialSystem* materials) {
 
         std::ifstream file(mapPath);
         if (!file.is_open()) {
@@ -407,6 +416,7 @@ namespace AsciiEngine {
             const auto& wc = root["worldConfig"];
             m_worldHalfSize = wc.value("worldHalfSize", 140.0f);
             m_biomeId = wc.value("biomeId", "temperate_forest");
+            m_viewPaddingPx = wc["culling"].value("viewPadding", 140.0f);
 
             if (wc.contains("culling")) {
                 m_chunkSize = wc["culling"].value("chunkSize", 24.0f);
@@ -544,7 +554,12 @@ namespace AsciiEngine {
                         scale = ReadVec3(item, "scale", { 1.0f, 1.0f, 1.0f });
                     }
                 }
-                SpawnInstance(pid, pos, rot, scale, spatialGrid);
+                MaterialId ovMat = FALLBACK_MATERIAL_ID;
+                if (materials && item.contains("overrideMaterialId")) {
+                    std::string ovName = item.value("overrideMaterialId", "");
+                    if (!ovName.empty()) ovMat = materials->GetId(ovName);
+                }
+                SpawnInstance(pid, pos, rot, scale, spatialGrid, ovMat);
             }
         }
 
@@ -773,5 +788,178 @@ namespace AsciiEngine {
             return false;
         }
         return m_groundMask[static_cast<size_t>(gy) * static_cast<size_t>(m_maskWidth) + static_cast<size_t>(gx)] == GroundMaskFlags::CLEAR;
+    }
+
+    void World::RebuildSpatialGrid(SpatialHashGrid& spatialGrid) const {
+        spatialGrid.Reset(m_chunkSize, m_instances.size());
+        for (uint32_t i = 0; i < static_cast<uint32_t>(m_instances.size()); ++i) {
+            const MapInstance& inst = m_instances[i];
+            const BakedPrefab* prefab = GetPrefab(inst.prefabId);
+            if (!prefab) continue;
+            float maxScaleXY = std::max(inst.scale.x, inst.scale.y);
+            spatialGrid.InsertInstance(i, inst.position.x, inst.position.y, prefab->boundRadiusXY * maxScaleXY);
+        }
+    }
+
+    bool World::RemoveInstance(size_t index, SpatialHashGrid& spatialGrid) {
+        if (index >= m_instances.size()) return false;
+        m_instances.erase(m_instances.begin() + static_cast<ptrdiff_t>(index));
+        RebuildSpatialGrid(spatialGrid);
+        return true;
+    }
+
+    bool World::InsertInstanceAt(size_t index, const MapInstance& inst, SpatialHashGrid& spatialGrid) {
+        if (index > m_instances.size()) index = m_instances.size();
+        m_instances.insert(m_instances.begin() + static_cast<ptrdiff_t>(index), inst);
+        RebuildSpatialGrid(spatialGrid);
+        return true;
+    }
+
+    bool World::UpdateInstanceTransform(size_t index, Vec3 pos, float rotDeg, Vec3 scale,
+        MaterialId overrideMat, SpatialHashGrid& spatialGrid) {
+        if (index >= m_instances.size()) return false;
+        MapInstance& inst = m_instances[index];
+        float rad = rotDeg * DEG_TO_RAD;
+        inst.position = pos;
+        inst.rotationDeg = rotDeg;
+        inst.cosRot = std::cos(rad);
+        inst.sinRot = std::sin(rad);
+        inst.scale = scale;
+        inst.overrideMaterialId = overrideMat;
+        RebuildSpatialGrid(spatialGrid);
+        return true;
+    }
+
+    bool World::SaveMapToFile(const std::string& mapPath,
+        const MaterialSystem& materials,
+        const DayNightConfig& dayNight,
+        const GlobalIlluminationConfig& gi,
+        const std::vector<PointLight>& lights,
+        const WorldWindConfig& wind,
+        const std::string& biomeId,
+        const std::string& weatherId,
+        bool randomWeather,
+        float viewPaddingPx,
+        const std::vector<EntitySpawnDef>& entities) const {
+        json root;
+
+        // 1. Configuracion global del mundo.
+        root["worldConfig"] = {
+            { "worldHalfSize", m_worldHalfSize },
+            { "biomeId", biomeId },
+            { "playerSpawn",{ { "x", m_playerSpawn.x },{ "y", m_playerSpawn.y } } },
+            { "culling",{ { "chunkSize", m_chunkSize },{ "viewPadding", viewPaddingPx } } },
+            { "dayNightCycle",{
+                { "enabled", dayNight.enabled },
+                { "currentTimeHours", dayNight.currentTimeHours },
+                { "dayLengthSeconds", dayNight.dayLengthSeconds }
+            } },
+            { "globalIllumination",{
+                { "skyColor", ColorToHex(gi.skyColor) },
+                { "groundColor", ColorToHex(gi.groundColor) },
+                { "ambientStrength", gi.ambientStrength }
+            } },
+            { "wind",{
+                { "directionDeg", wind.directionDeg },
+                { "baseSpeed", wind.baseSpeed },
+                { "gustStrength", wind.gustStrength }
+            } },
+            { "weather",{
+                { "currentWeatherId", weatherId },
+                { "randomTransitionsEnabled", randomWeather }
+            } }
+        };
+
+        // 2. Zonas de agua.
+        json waterArr = json::array();
+        for (const WaterZone& wz : m_waterZones) {
+            waterArr.push_back({
+                { "minX", wz.minX },{ "maxX", wz.maxX },
+                { "minY", wz.minY },{ "maxY", wz.maxY },
+                { "deepColor", ColorToHex(wz.deepColor) },
+                { "shallowColor", ColorToHex(wz.shallowColor) },
+                { "waveSpeed", wz.waveSpeed }
+                });
+        }
+        root["waterZones"] = waterArr;
+
+        // 3. Superficies transitables (puentes, patios, pisos).
+        json surfArr = json::array();
+        for (const SurfaceZone& sz : m_surfaceZones) {
+            const char* patStr = "GRID";
+            if (sz.pattern == SurfacePattern::PLANKS_X) patStr = "PLANKS_X";
+            else if (sz.pattern == SurfacePattern::PLANKS_Y) patStr = "PLANKS_Y";
+            else if (sz.pattern == SurfacePattern::CHECKER)  patStr = "CHECKER";
+            else if (sz.pattern == SurfacePattern::NOISE)    patStr = "NOISE";
+
+            surfArr.push_back({
+                { "id", sz.id },
+                { "minX", sz.minX },{ "maxX", sz.maxX },
+                { "minY", sz.minY },{ "maxY", sz.maxY },
+                { "elevationZ", sz.elevationZ },
+                { "primaryColor", ColorToHex(sz.primaryColor) },
+                { "secondaryColor", ColorToHex(sz.secondaryColor) },
+                { "glyphs", sz.glyphs },
+                { "pattern", patStr },
+                { "suppressFoliage", sz.suppressFoliage },
+                { "walkableOverWater", sz.walkableOverWater }
+                });
+        }
+        root["surfaceZones"] = surfArr;
+
+        // 4. Luces estaticas y parpadeantes.
+        json lightArr = json::array();
+        for (const PointLight& pl : lights) {
+            lightArr.push_back({
+                { "pos",{ { "x", pl.position.x },{ "y", pl.position.y },{ "z", pl.position.z } } },
+                { "color", ColorToHex(pl.color) },
+                { "intensity", pl.intensity },
+                { "radius", pl.radius },
+                { "flicker", pl.flicker }
+                });
+        }
+        root["lights"] = lightArr;
+
+        // 5. Personajes / entidades colocadas.
+        json entArr = json::array();
+        for (const EntitySpawnDef& e : entities) {
+            entArr.push_back({
+                { "characterId", e.characterId },
+                { "pos",{ { "x", e.position.x },{ "y", e.position.y },{ "z", 0.0f } } },
+                { "facingDeg", e.facingDeg },
+                { "isPlayer", e.isPlayer },
+                { "wanderRadius", e.wanderRadius },
+                { "scale", e.scale }
+                });
+        }
+        root["entities"] = entArr;
+
+        // 6. Todas las instancias explicitas (conserva exactamente lo editado al recargar).
+        json instArr = json::array();
+        for (const MapInstance& inst : m_instances) {
+            const BakedPrefab* p = GetPrefab(inst.prefabId);
+            if (!p) continue;
+            json entry = {
+                { "prefabId", p->id },
+                { "pos",{ { "x", inst.position.x },{ "y", inst.position.y },{ "z", inst.position.z } } },
+                { "rotDeg", inst.rotationDeg },
+                { "scale",{ { "x", inst.scale.x },{ "y", inst.scale.y },{ "z", inst.scale.z } } }
+            };
+            if (inst.overrideMaterialId != FALLBACK_MATERIAL_ID) {
+                entry["overrideMaterialId"] = materials.Get(inst.overrideMaterialId).name;
+            }
+            instArr.push_back(std::move(entry));
+        }
+        root["instances"] = instArr;
+
+        std::ofstream out(mapPath);
+        if (!out.is_open()) {
+            TraceLog(LOG_ERROR, "WORLD: No se pudo escribir el mapa JSON en %s", mapPath.c_str());
+            return false;
+        }
+        out << root.dump(2);
+        TraceLog(LOG_INFO, "WORLD: Mapa guardado en %s (%zu instancias, %zu luces, %zu entidades).",
+            mapPath.c_str(), m_instances.size(), lights.size(), entities.size());
+        return true;
     }
 } // namespace AsciiEngine

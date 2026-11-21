@@ -164,7 +164,34 @@ namespace AsciiEngine {
     public:
         bool LoadObjectsDirectory(const std::string& objectsDir, const MaterialSystem& materials);
         // Carga instancias explicitas, grupos procedurales (scatterGroups) y spawn desde un mapa JSON.
-        bool LoadMapFromFile(const std::string& mapPath, SpatialHashGrid& spatialGrid);
+        bool LoadMapFromFile(const std::string& mapPath, SpatialHashGrid& spatialGrid,
+            const MaterialSystem* materials = nullptr);
+
+        // Serializa el estado completo del mapa editado a un archivo JSON legible.
+        bool SaveMapToFile(const std::string& mapPath,
+            const MaterialSystem& materials,
+            const DayNightConfig& dayNight,
+            const GlobalIlluminationConfig& gi,
+            const std::vector<PointLight>& lights,
+            const WorldWindConfig& wind,
+            const std::string& biomeId,
+            const std::string& weatherId,
+            bool randomWeather,
+            float viewPaddingPx,
+            const std::vector<EntitySpawnDef>& entities) const;
+
+        // Operaciones de edicion del Editor de Mapas (mantienen coherente SpatialHashGrid).
+        void RebuildSpatialGrid(SpatialHashGrid& spatialGrid) const;
+        bool RemoveInstance(size_t index, SpatialHashGrid& spatialGrid);
+        bool InsertInstanceAt(size_t index, const MapInstance& inst, SpatialHashGrid& spatialGrid);
+        bool UpdateInstanceTransform(size_t index, Vec3 pos, float rotDeg, Vec3 scale,
+            MaterialId overrideMat, SpatialHashGrid& spatialGrid);
+
+        std::vector<MapInstance>& GetMutableInstances() { return m_instances; }
+        std::vector<WaterZone>& GetMutableWaterZones() { return m_waterZones; }
+        std::vector<SurfaceZone>& GetMutableSurfaceZones() { return m_surfaceZones; }
+        void                      SetChunkSize(float cs) { m_chunkSize = std::max(8.0f, cs); }
+        float                     GetViewPaddingPx() const { return m_viewPaddingPx; }
 
         // Crea una instancia en el mundo y la registra automaticamente en el SpatialHashGrid.
         uint32_t SpawnInstance(PrefabId prefabId, Vec3 pos, float rotDeg, Vec3 scale,
@@ -214,6 +241,7 @@ namespace AsciiEngine {
         void StampOBBMask(float cx, float cy, Vec2 halfSize, float cosRot, float sinRot, uint8_t flag);
         void StampRectMask(float minX, float maxX, float minY, float maxY, uint8_t flag);
 
+
         std::vector<BakedPrefab>                  m_prefabs;
         std::unordered_map<std::string, PrefabId> m_prefabNameToId;
         std::vector<MapInstance>                  m_instances;
@@ -225,6 +253,7 @@ namespace AsciiEngine {
         float                m_maskOriginX = -140.0f;
         float                m_maskOriginY = -140.0f;
         float                m_maskCellSize = 0.5f;
+        float                m_viewPaddingPx = 140.0f;
         float                m_maskInvCellSize = 2.0f;
         int                  m_maskWidth = 0;
         int                  m_maskHeight = 0;

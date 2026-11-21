@@ -436,4 +436,49 @@ namespace AsciiEngine {
         return { m_wind.dirX * disp, m_wind.dirY * disp };
     }
 
+    std::string WeatherSystem::GetActiveBiomeId() const {
+        return m_biomes.empty() ? "temperate_forest" : m_biomes[m_activeBiomeIdx].id;
+    }
+
+    std::string WeatherSystem::GetActiveWeatherId() const {
+        return m_weathers.empty() ? "clear_day" : m_weathers[m_targetWeatherIdx].id;
+    }
+
+    void WeatherSystem::SetBiomeByIndex(size_t idx) {
+        if (m_biomes.empty()) return;
+        m_activeBiomeIdx = idx % m_biomes.size();
+        const BiomeDef& b = m_biomes[m_activeBiomeIdx];
+        m_activeBiomeName = b.name;
+        ApplyBiomeGroundStyle(b);
+        if (!m_weathers.empty()) {
+            TransitionToWeather(m_weathers[m_targetWeatherIdx].id);
+        }
+    }
+
+    void WeatherSystem::SetWindDirectionDeg(float deg) {
+        float rad = deg * DEG_TO_RAD;
+        m_wind.dirX = std::cos(rad);
+        m_wind.dirY = std::sin(rad);
+    }
+
+    float WeatherSystem::GetWindDirectionDeg() const {
+        float deg = std::atan2(m_wind.dirY, m_wind.dirX) / DEG_TO_RAD;
+        if (deg < 0.0f) deg += 360.0f;
+        return deg;
+    }
+
+    void WeatherSystem::SetWindBaseSpeed(float speed) {
+        float clamped = MathIso::Clamp(speed, 0.0f, 15.0f);
+        m_wind.speed = clamped;
+        m_fromWindSpeed = clamped;
+        m_targetWindSpeed = clamped;
+    }
+
+    void WeatherSystem::SetWindGustStrength(float gust) {
+        float clamped = MathIso::Clamp(gust, 0.0f, 3.0f);
+        m_wind.gustStrength = clamped;
+        m_fromWindGust = clamped;
+        m_targetWindGust = clamped;
+    }
+
 } // namespace AsciiEngine

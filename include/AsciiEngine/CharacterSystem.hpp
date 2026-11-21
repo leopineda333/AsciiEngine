@@ -147,8 +147,14 @@ namespace AsciiEngine {
         const std::vector<CharacterInstance>& GetInstances() const { return m_instances; }
         uint32_t                              GetInstanceCount() const { return static_cast<uint32_t>(m_instances.size()); }
         std::string                           GetControlledName() const;
-        const char* GetControlledAnimStateName() const;
+        const char*                           GetControlledAnimStateName() const;
         size_t                                GetBakedMemoryBytes() const;
+
+        // Accesores de edicion y exportacion para el Editor de Mapas (Fase 7).
+        const std::vector<CharacterTemplate>& GetTemplates() const { return m_templates; }
+        std::vector<CharacterInstance>&       GetMutableInstances() { return m_instances; }
+        bool                                  RemoveCharacter(size_t index);
+        std::vector<EntitySpawnDef>           ExportEntitySpawns() const;
 
     private:
         CharacterTemplateId FindTemplateId(std::string_view id) const;

@@ -13,6 +13,7 @@
 #include <AsciiEngine/CharacterSystem.hpp>
 #include <AsciiEngine/World.hpp>
 #include <AsciiEngine/DebugHUD.hpp>
+#include <AsciiEngine/Editor.hpp>
 #include "raylib.h"
 
 #include <algorithm>
@@ -55,6 +56,7 @@ namespace AsciiEngine {
         CharacterSystem    characterSystem;
         World              world;
         DebugHUD           debugHUD;
+        Editor             editor;
 
         bool playerTorchOn = true;
 
@@ -78,6 +80,9 @@ namespace AsciiEngine {
 
         // Posicion mundial del personaje actualmente controlado por el jugador.
         Vec2 GetFocusWorldPos() const {
+            if (editor.IsEnabled()) {
+                return MathIso::IsoToWorldGround({ camera.target.x, camera.target.y }, isoConfig);
+            }
             if (const CharacterInstance* c = characterSystem.GetControlledCharacter()) {
                 return c->actor.position;
             }
@@ -134,6 +139,24 @@ namespace AsciiEngine {
                 (screenPt.x - camera.offset.x) * invZoom + camera.target.x,
                 (screenPt.y - camera.offset.y) * invZoom + camera.target.y
             };
+        }
+
+        void ProcessEditorRequests(EditorContext& ectx) {
+            if (ectx.requestWorldRebuild) {
+                world.RebuildSpatialGrid(spatialGrid);
+                world.RebuildGroundMask(0.5f);
+                lightingSystem.BuildShadowHeightfield(world, materialSystem, 0.6f);
+                visibleInstanceIds.reserve(world.GetInstances().size());
+                activeChunks.reserve(spatialGrid.GetTotalChunks());
+            }
+            if (ectx.requestLightEmittersSync) {
+                particleSystem.ClearWorldState();
+                for (const PointLight& pl : lightingSystem.GetMapLights()) {
+                    if (pl.flicker && pl.color.r >= 200) {
+                        particleSystem.AddWorldEmitter(pl.position, { 0.35f, 0.35f, 0.25f }, "fire_sparks", 14.0f, false);
+                    }
+                }
+            }
         }
 
         void ComputeVisibleWorldBounds(float& outMinWX, float& outMaxWX,
@@ -593,9 +616,43 @@ namespace AsciiEngine {
         return matOk && objOk;
     }
 
+    bool Context::SaveMap(const std::string& mapPath) const {
+        WorldWindConfig wc = {
+            m_impl->weatherSystem.GetWindDirectionDeg(),
+            m_impl->weatherSystem.GetWind().speed,
+            m_impl->weatherSystem.GetWind().gustStrength
+        };
+        return m_impl->world.SaveMapToFile(
+            mapPath, m_impl->materialSystem,
+            m_impl->lightingSystem.GetDayNightConfig(),
+            m_impl->lightingSystem.GetGIConfig(),
+            m_impl->lightingSystem.GetMapLights(),
+            wc,
+            m_impl->weatherSystem.GetActiveBiomeId(),
+            m_impl->weatherSystem.GetActiveWeatherId(),
+            m_impl->weatherSystem.AreRandomTransitionsOn(),
+            m_impl->viewPaddingPx,
+            m_impl->characterSystem.ExportEntitySpawns()
+        );
+    }
+
+    void Context::ToggleEditorMode() {
+        m_impl->editor.Toggle();
+        // Ocultamos el HUD F3 al entrar al Editor para que no se encime con el panel izquierdo.
+        if (m_impl->editor.IsEnabled() && m_impl->debugHUD.IsTelemetryVisible()) {
+            m_impl->debugHUD.ToggleTelemetry();
+        }
+    }
+
+    void Context::ToggleDebugHUD() {
+        m_impl->debugHUD.ToggleTelemetry();
+    }
+
     bool Context::LoadMap(const std::string& mapPath) {
         m_impl->activeMapPath = mapPath;
-        bool ok = m_impl->world.LoadMapFromFile(mapPath, m_impl->spatialGrid);
+        bool ok = m_impl->world.LoadMapFromFile(mapPath, m_impl->spatialGrid, &m_impl->materialSystem);
+        m_impl->viewPaddingPx = m_impl->world.GetViewPaddingPx();
+        m_impl->editor.ClearHistory();
 
         if (ok) {
             // 1. Instanciar personajes definidos en la seccion "entities" del mapa JSON.
@@ -663,70 +720,115 @@ namespace AsciiEngine {
         m_impl->camera.offset = { m_impl->screenWidth * 0.5f, m_impl->screenHeight * 0.5f };
         m_impl->zBuffer.Resize(m_impl->screenWidth, m_impl->screenHeight, m_impl->cellWidthPx, m_impl->cellHeightPx);
 
-        // 1. Entrada del jugador + cambio de criatura [TAB] + accion [E].
-        Vec2 screenInput = { 0.0f, 0.0f };
-        if (IsKeyDown(KEY_W)) screenInput.y -= 1.0f;
-        if (IsKeyDown(KEY_S)) screenInput.y += 1.0f;
-        if (IsKeyDown(KEY_A)) screenInput.x -= 1.0f;
-        if (IsKeyDown(KEY_D)) screenInput.x += 1.0f;
+        // Alternar entre Modo Juego y Modo Editor Visual [F1].
+        if (IsKeyPressed(KEY_F1)) {
+            ToggleEditorMode();
+        }
 
-        if (IsKeyPressed(KEY_TAB)) m_impl->characterSystem.CycleControlledCharacter();
-        if (IsKeyPressed(KEY_E))   m_impl->characterSystem.TriggerPlayerAttack();
+        const bool inEditor = m_impl->editor.IsEnabled();
+        Vec2 desiredWorldDir = { 0.0f, 0.0f };
+        bool playerSprint = false;
 
-        Vec2 desiredWorldDir = MathIso::IsoToWorldGround(screenInput, m_impl->isoConfig);
+        if (inEditor) {
+            // --- MODO EDITOR: camara libre, raycast, Undo/Redo y guardado JSON ---
+            Vec2 camTarget = { m_impl->camera.target.x, m_impl->camera.target.y };
+            EditorContext ectx{
+                m_impl->world, m_impl->materialSystem, m_impl->spatialGrid,
+                m_impl->lightingSystem, m_impl->weatherSystem, m_impl->characterSystem,
+                m_impl->isoConfig,
+                m_impl->screenWidth, m_impl->screenHeight,
+                camTarget,{ m_impl->camera.offset.x, m_impl->camera.offset.y },
+                m_impl->camera.zoom, m_impl->minZoom, m_impl->maxZoom,
+                m_impl->viewPaddingPx, m_impl->activeMapPath
+            };
+
+            m_impl->editor.Update(dt, ectx);
+            m_impl->camera.target = { camTarget.x, camTarget.y };
+            m_impl->ProcessEditorRequests(ectx);
+
+            // En modo editor, F5 recarga las plantillas JSON sin borrar tus cambios sin guardar.
+            if (ectx.requestHotReload || IsKeyPressed(KEY_F5)) {
+                LoadRegistry(m_impl->dataRootPath);
+                m_impl->world.RebuildGroundMask(0.5f);
+                m_impl->lightingSystem.BuildShadowHeightfield(m_impl->world, m_impl->materialSystem, 0.6f);
+                m_impl->editor.ShowToast("Plantillas recargadas (F5)", 2.0f);
+            }
+            if (ectx.requestReloadMap && !m_impl->activeMapPath.empty()) {
+                LoadMap(m_impl->activeMapPath);
+            }
+        }
+        else {
+            // --- MODO JUEGO: entrada del personaje, zoom y atajos de entorno ---
+            Vec2 screenInput = { 0.0f, 0.0f };
+            if (IsKeyDown(KEY_W)) screenInput.y -= 1.0f;
+            if (IsKeyDown(KEY_S)) screenInput.y += 1.0f;
+            if (IsKeyDown(KEY_A)) screenInput.x -= 1.0f;
+            if (IsKeyDown(KEY_D)) screenInput.x += 1.0f;
+
+            if (IsKeyPressed(KEY_TAB)) m_impl->characterSystem.CycleControlledCharacter();
+            if (IsKeyPressed(KEY_E))   m_impl->characterSystem.TriggerPlayerAttack();
+
+            desiredWorldDir = MathIso::IsoToWorldGround(screenInput, m_impl->isoConfig);
+            playerSprint = IsKeyDown(KEY_LEFT_SHIFT);
+
+            float wheel = GetMouseWheelMove();
+            if (wheel != 0.0f) {
+                m_impl->camera.zoom = MathIso::Clamp(m_impl->camera.zoom + wheel * 0.12f, m_impl->minZoom, m_impl->maxZoom);
+            }
+
+            if (IsKeyPressed(KEY_SPACE)) m_impl->lightingSystem.ToggleCycleRunning();
+            if (IsKeyDown(KEY_LEFT))     m_impl->lightingSystem.AdjustTimeHours(-dt * 4.5f);
+            if (IsKeyDown(KEY_RIGHT))    m_impl->lightingSystem.AdjustTimeHours(dt * 4.5f);
+            if (IsKeyPressed(KEY_ONE))   m_impl->weatherSystem.TransitionToWeather("clear_day");
+            if (IsKeyPressed(KEY_TWO))   m_impl->weatherSystem.TransitionToWeather("heavy_rain");
+            if (IsKeyPressed(KEY_THREE)) m_impl->weatherSystem.TransitionToWeather("blizzard");
+            if (IsKeyPressed(KEY_M))     m_impl->weatherSystem.CycleBiome();
+            if (IsKeyPressed(KEY_R))     m_impl->weatherSystem.ToggleRandomTransitions();
+
+            if (IsKeyPressed(KEY_F5)) {
+                float savedHr = m_impl->lightingSystem.GetTimeHours();
+                LoadRegistry(m_impl->dataRootPath);
+                if (!m_impl->activeMapPath.empty()) {
+                    LoadMap(m_impl->activeMapPath);
+                    m_impl->lightingSystem.AdjustTimeHours(savedHr - m_impl->lightingSystem.GetTimeHours());
+                }
+            }
+        }
+
+        // Controles visuales y de diagnostico disponibles tanto en Juego como en Editor.
+        if (IsKeyPressed(KEY_H))  m_impl->lightingSystem.ToggleShadows();
+        if (IsKeyPressed(KEY_T))  m_impl->playerTorchOn = !m_impl->playerTorchOn;
+        if (IsKeyPressed(KEY_O))  m_impl->zBufferStyle.enableOutlines = !m_impl->zBufferStyle.enableOutlines;
+        if (IsKeyPressed(KEY_B))  m_impl->zBufferStyle.enableAsciiBorder = !m_impl->zBufferStyle.enableAsciiBorder;
+        if (IsKeyPressed(KEY_G))  m_impl->zBufferStyle.enableSubPixelOffset = !m_impl->zBufferStyle.enableSubPixelOffset;
+        if (IsKeyPressed(KEY_V))  m_impl->zBufferStyle.enableCellBacking = !m_impl->zBufferStyle.enableCellBacking;
+        if (IsKeyPressed(KEY_F3)) m_impl->debugHUD.ToggleTelemetry();
+        if (IsKeyPressed(KEY_F4)) m_impl->debugHUD.ToggleOverlays();
+
+        // Fisica, colisiones, IA de NPCs y animaciones (en Editor desiredWorldDir es 0,0).
         float groundFriction = MathIso::Lerp(10.0f, 4.5f, m_impl->weatherSystem.GetModifiers().snowCoverage);
-
-        // 2. Fisica, colisiones, IA de NPCs y animaciones procedurales.
         m_impl->characterSystem.Update(
-            dt, desiredWorldDir, IsKeyDown(KEY_LEFT_SHIFT), groundFriction,
+            dt, desiredWorldDir, playerSprint, groundFriction,
             m_impl->world, m_impl->spatialGrid,
             m_impl->physicsQueryIds, m_impl->physicsQueryChunks
         );
 
-        // 3. Seguimiento suave de camara al personaje controlado + Zoom acotado.
-        Vec2 focusPos = m_impl->GetFocusWorldPos();
-        Vec2 targetIso = MathIso::WorldToIso({ focusPos.x, focusPos.y, 1.2f }, m_impl->isoConfig);
-        float camSmooth = MathIso::Clamp(9.0f * dt, 0.0f, 1.0f);
-        m_impl->camera.target.x = MathIso::Lerp(m_impl->camera.target.x, targetIso.x, camSmooth);
-        m_impl->camera.target.y = MathIso::Lerp(m_impl->camera.target.y, targetIso.y, camSmooth);
-
-        float wheel = GetMouseWheelMove();
-        if (wheel != 0.0f) {
-            m_impl->camera.zoom = MathIso::Clamp(m_impl->camera.zoom + wheel * 0.12f, m_impl->minZoom, m_impl->maxZoom);
+        // La camara solo sigue al personaje en Modo Juego; en Modo Editor es libre.
+        if (!inEditor) {
+            Vec2 charPos = m_impl->GetFocusWorldPos();
+            Vec2 targetIso = MathIso::WorldToIso({ charPos.x, charPos.y, 1.2f }, m_impl->isoConfig);
+            float camSmooth = MathIso::Clamp(9.0f * dt, 0.0f, 1.0f);
+            m_impl->camera.target.x = MathIso::Lerp(m_impl->camera.target.x, targetIso.x, camSmooth);
+            m_impl->camera.target.y = MathIso::Lerp(m_impl->camera.target.y, targetIso.y, camSmooth);
         }
 
         m_impl->UpdateEffectLod();
 
-        // 4. Controles de entorno, estilo y Hot-Reloading (F5).
-        if (IsKeyPressed(KEY_SPACE)) m_impl->lightingSystem.ToggleCycleRunning();
-        if (IsKeyDown(KEY_LEFT))     m_impl->lightingSystem.AdjustTimeHours(-dt * 4.5f);
-        if (IsKeyDown(KEY_RIGHT))    m_impl->lightingSystem.AdjustTimeHours(dt * 4.5f);
-        if (IsKeyPressed(KEY_H))     m_impl->lightingSystem.ToggleShadows();
-        if (IsKeyPressed(KEY_T))     m_impl->playerTorchOn = !m_impl->playerTorchOn;
-        if (IsKeyPressed(KEY_O))     m_impl->zBufferStyle.enableOutlines = !m_impl->zBufferStyle.enableOutlines;
-        if (IsKeyPressed(KEY_B))     m_impl->zBufferStyle.enableAsciiBorder = !m_impl->zBufferStyle.enableAsciiBorder;
-        if (IsKeyPressed(KEY_G))     m_impl->zBufferStyle.enableSubPixelOffset = !m_impl->zBufferStyle.enableSubPixelOffset;
-        if (IsKeyPressed(KEY_V))     m_impl->zBufferStyle.enableCellBacking = !m_impl->zBufferStyle.enableCellBacking;
-        if (IsKeyPressed(KEY_ONE))   m_impl->weatherSystem.TransitionToWeather("clear_day");
-        if (IsKeyPressed(KEY_TWO))   m_impl->weatherSystem.TransitionToWeather("heavy_rain");
-        if (IsKeyPressed(KEY_THREE)) m_impl->weatherSystem.TransitionToWeather("blizzard");
-        if (IsKeyPressed(KEY_M))     m_impl->weatherSystem.CycleBiome();
-        if (IsKeyPressed(KEY_R))     m_impl->weatherSystem.ToggleRandomTransitions();
-        if (IsKeyPressed(KEY_F3))    m_impl->debugHUD.ToggleTelemetry();
-        if (IsKeyPressed(KEY_F4))    m_impl->debugHUD.ToggleOverlays();
-        if (IsKeyPressed(KEY_F5)) {
-            float savedHr = m_impl->lightingSystem.GetTimeHours();
-            LoadRegistry(m_impl->dataRootPath);
-            if (!m_impl->activeMapPath.empty()) {
-                LoadMap(m_impl->activeMapPath);
-                m_impl->lightingSystem.AdjustTimeHours(savedHr - m_impl->lightingSystem.GetTimeHours());
-            }
-        }
-
-        // 5. Simulacion ambiental: Clima -> Iluminacion -> Particulas SoA.
+        // Simulacion ambiental: Clima -> Iluminacion -> Particulas SoA centradas en el foco activo.
         m_impl->weatherSystem.Update(dt);
         m_impl->lightingSystem.Update(dt, m_impl->weatherSystem.GetModifiers());
 
+        const Vec2 focusPos = m_impl->GetFocusWorldPos();
         const SunState& sun = m_impl->lightingSystem.GetSunState();
         m_impl->particleSystem.Update(
             dt, m_impl->weatherSystem.GetWind(), sun.isNight, focusPos,
@@ -736,6 +838,7 @@ namespace AsciiEngine {
 
         auto simEnd = Clock::now();
 
+        // Actualizar telemetria del frame.
         auto& t = m_impl->telemetry;
         t.simTimeMs = ElapsedMs(simStart, simEnd);
         t.fps = static_cast<float>(GetFPS());
@@ -988,6 +1091,30 @@ namespace AsciiEngine {
         t.gridHeight = m_impl->zBuffer.GetGridHeight();
 
         m_impl->debugHUD.RenderPanel(t, &m_impl->renderFont);
+
+        if (m_impl->editor.IsEnabled()) {
+            Vec2 camTarget = { m_impl->camera.target.x, m_impl->camera.target.y };
+            EditorContext ectx{
+                m_impl->world, m_impl->materialSystem, m_impl->spatialGrid,
+                m_impl->lightingSystem, m_impl->weatherSystem, m_impl->characterSystem,
+                m_impl->isoConfig,
+                m_impl->screenWidth, m_impl->screenHeight,
+                camTarget,{ m_impl->camera.offset.x, m_impl->camera.offset.y },
+                m_impl->camera.zoom, m_impl->minZoom, m_impl->maxZoom,
+                m_impl->viewPaddingPx, m_impl->activeMapPath
+            };
+            m_impl->editor.Render(ectx, &m_impl->renderFont);
+            m_impl->camera.target = { camTarget.x, camTarget.y };
+            m_impl->ProcessEditorRequests(ectx);
+            if (ectx.requestHotReload) {
+                const_cast<Context*>(this)->LoadRegistry(m_impl->dataRootPath);
+                m_impl->world.RebuildGroundMask(0.5f);
+                m_impl->lightingSystem.BuildShadowHeightfield(m_impl->world, m_impl->materialSystem, 0.6f);
+            }
+            if (ectx.requestReloadMap && !m_impl->activeMapPath.empty()) {
+                const_cast<Context*>(this)->LoadMap(m_impl->activeMapPath);
+            }
+        }
 
         EndDrawing();
     }

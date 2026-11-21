@@ -12,6 +12,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <vector>
+#include <cmath>
 
 namespace AsciiEngine {
 
@@ -118,6 +119,22 @@ namespace AsciiEngine {
         void AdjustTimeHours(float deltaHours);
         void ToggleCycleRunning() { m_dayNight.enabled = !m_dayNight.enabled; }
         void ToggleShadows() { m_shadowsEnabled = !m_shadowsEnabled; }
+
+        // Setters/getters de edicion en vivo para el Editor de Mapas (Fase 7).
+        void SetTimeHours(float hours) {
+            m_dayNight.currentTimeHours = std::fmod(hours, 24.0f);
+            if (m_dayNight.currentTimeHours < 0.0f) m_dayNight.currentTimeHours += 24.0f;
+            RecomputeSunState();
+        }
+        void  SetDayLengthSeconds(float sec) { m_dayNight.dayLengthSeconds = (sec > 5.0f) ? sec : 5.0f; }
+        float GetDayLengthSeconds() const { return m_dayNight.dayLengthSeconds; }
+        void  SetCycleRunning(bool on) { m_dayNight.enabled = on; }
+        void  SetShadowsEnabled(bool on) { m_shadowsEnabled = on; }
+
+        DayNightConfig                  GetDayNightConfig() const { return m_dayNight; }
+        const GlobalIlluminationConfig& GetGIConfig() const { return m_giConfig; }
+        GlobalIlluminationConfig& GetMutableGIConfig() { return m_giConfig; }
+        std::vector<PointLight>& GetMutableMapLights() { return m_mapLights; }
 
         bool  IsCycleRunning() const { return m_dayNight.enabled; }
         bool  AreShadowsEnabled() const { return m_shadowsEnabled; }
