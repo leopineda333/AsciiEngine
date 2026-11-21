@@ -62,6 +62,16 @@ namespace AsciiEngine {
             return false;
         }
 
+        // Calculamos el desplazamiento exacto en pixeles enteros respecto al centro de la celda.
+        // Como depende solo de zoomedIso, es 100% invariante al movimiento de la camara (0 swimming).
+        const float halfW = m_cellWidth * 0.5f;
+        const float halfH = m_cellHeight * 0.5f;
+        const float cellCenterIsoX = (static_cast<float>(worldCellX) + 0.5f) * m_cellWidth;
+        const float cellCenterIsoY = (static_cast<float>(worldCellY) + 0.5f) * m_cellHeight;
+
+        const int8_t subX = static_cast<int8_t>(std::clamp(std::round(zoomedIsoX - cellCenterIsoX), -halfW, halfW));
+        const int8_t subY = static_cast<int8_t>(std::clamp(std::round(zoomedIsoY - cellCenterIsoY), -halfH, halfH));
+
         uint8_t baseFlags = CellFlags::NONE;
         if (wantsOutline && !isGround) baseFlags |= CellFlags::WANTS_OUTLINE;
         if (isGround)                  baseFlags |= CellFlags::IS_GROUND;
@@ -75,19 +85,31 @@ namespace AsciiEngine {
                 cell.color = color;
                 cell.materialId = matId;
                 cell.flags = baseFlags;
+                cell.subOffsetX = subX;
+                cell.subOffsetY = subY;
             }
             return true;
         }
 
-        static constexpr int kOffsets[5][2] = { { 0, 0 },{ -1, 0 },{ 1, 0 },{ 0, -1 },{ 0, 1 } };
-        for (int k = 0; k < 5; ++k) {
+        // Splatting adaptativo:
+        // splatRadius == 1 -> cruz de 5 celdas (zoom 1.2x - 1.85x).
+        // splatRadius >= 2 -> vecindad 3x3 de 9 celdas (zoom 1.85x - 2.5x) sin huecos al acercarse.
+        static constexpr int kOffsets[9][2] = {
+            { 0,  0 },{ -1,  0 },{ 1,  0 },{ 0, -1 },{ 0,  1 },
+            { -1, -1 },{ 1, -1 },{ -1,  1 },{ 1,  1 }
+        };
+        const int count = (splatRadius >= 2) ? 9 : 5;
+
+        for (int k = 0; k < count; ++k) {
             int nx = cx + kOffsets[k][0];
             int ny = cy + kOffsets[k][1];
             if (nx < 0 || nx >= m_gridWidth || ny < 0 || ny >= m_gridHeight) {
                 continue;
             }
 
-            float effDepth = (k == 0) ? depth : (depth - 0.015f);
+            // Prioridad jerarquica: centro (0) > ortogonales (-0.015) > diagonales (-0.025).
+            float bias = (k == 0) ? 0.0f : ((k < 5) ? 0.015f : 0.025f);
+            float effDepth = depth - bias;
             size_t idx = static_cast<size_t>(ny) * static_cast<size_t>(m_gridWidth) + static_cast<size_t>(nx);
             ZBufferCell& cell = m_cells[idx];
 
@@ -97,6 +119,9 @@ namespace AsciiEngine {
                 cell.color = color;
                 cell.materialId = matId;
                 cell.flags = baseFlags;
+                // El centro conserva el sub-offset exacto; el splat lateral se centra para sellar huecos.
+                cell.subOffsetX = (k == 0) ? subX : 0;
+                cell.subOffsetY = (k == 0) ? subY : 0;
             }
         }
         return true;
@@ -114,6 +139,7 @@ namespace AsciiEngine {
 
         const float drawHeight = m_cellHeight * 1.12f;
         const float scaleFactor = drawHeight / static_cast<float>(font.baseSize);
+        const float subScale = style.enableSubPixelOffset ? 1.0f : 0.0f;
         ZBufferCell* rawCells = m_cells.data();
 
         auto getNeighbor = [&](int nx, int ny) -> const ZBufferCell* {
@@ -130,6 +156,42 @@ namespace AsciiEngine {
         auto isBackdropCell = [](const ZBufferCell* n) -> bool {
             return !n || (n->glyph == '\0') || (n->flags & CellFlags::IS_GROUND);
             };
+
+        // =========================================================================
+        // PASE 0: RESPALDO VOLUMETRICO PARA OBJETOS SOLIDOS (1 SOLO BATCH DE QUADS)
+        // Impide que el fondo gris se cuele entre glifos pequenos (ej. ',' o ';'),
+        // dando color y masa solida a arboles, rocas y estructuras sin perder el estilo ASCII.
+        // =========================================================================
+        if (style.enableCellBacking) {
+            const float backW = m_cellWidth * 1.18f;
+            const float backH = m_cellHeight * 1.06f;
+
+            for (int cy = 0; cy < m_gridHeight; ++cy) {
+                const float centerY = (static_cast<float>(cy) - 0.5f) * m_cellHeight - m_scrollOffsetY;
+                const size_t rowOffset = static_cast<size_t>(cy) * static_cast<size_t>(m_gridWidth);
+
+                for (int cx = 0; cx < m_gridWidth; ++cx) {
+                    const ZBufferCell& cell = rawCells[rowOffset + static_cast<size_t>(cx)];
+
+                    // Solo aplica a geometria 3D real (excluye suelo, agua, pasto, particulas y estrellas de luz).
+                    if (cell.glyph == '\0' || (cell.flags & CellFlags::IS_GROUND) || cell.materialId == FALLBACK_MATERIAL_ID) {
+                        continue;
+                    }
+
+                    const float drawX = (static_cast<float>(cx) - 0.5f) * m_cellWidth - m_scrollOffsetX
+                        + static_cast<float>(cell.subOffsetX) * subScale;
+                    const float drawY = centerY + static_cast<float>(cell.subOffsetY) * subScale;
+
+                    Color backCol = {
+                        static_cast<unsigned char>(static_cast<float>(cell.color.r) * style.backingDarken),
+                        static_cast<unsigned char>(static_cast<float>(cell.color.g) * style.backingDarken),
+                        static_cast<unsigned char>(static_cast<float>(cell.color.b) * style.backingDarken),
+                        style.backingAlpha
+                    };
+                    DrawRectangleRec({ drawX - backW * 0.5f, drawY - backH * 0.5f, backW, backH }, backCol);
+                }
+            }
+        }
 
         // =========================================================================
         // PASE 1: SILUETAS DIRECCIONALES ASCII + OUTLINES NEGROS DE 1-2 PX
@@ -150,7 +212,7 @@ namespace AsciiEngine {
                     const ZBufferCell* nLeft = getNeighbor(cx - 1, cy);
                     const ZBufferCell* nRight = getNeighbor(cx + 1, cy);
 
-                    // CASO A: Celda vacia o de suelo adyacente a un objeto -> Borde direccional ASCII.
+                    // CASO A: Celda vacia o de suelo junto a un objeto -> Borde direccional ASCII.
                     if (cell.glyph == '\0' || (cell.flags & CellFlags::IS_GROUND)) {
                         if (!style.enableAsciiBorder) continue;
 
@@ -176,15 +238,13 @@ namespace AsciiEngine {
                             DrawTexturePro(font.texture, src, { centerX, centerY, ew, eh }, origin, 0.0f,
                                 { style.asciiBorderColor.r, style.asciiBorderColor.g,
                                   style.asciiBorderColor.b, style.asciiBorderColor.a });
-                            ++stats.outlineCellsDrawn;
-
-                            // Marca esa celda para que el pase 2 no le dibuje suelo encima del borde
                             cell.flags |= CellFlags::IS_SILHOUETTE;
+                            ++stats.outlineCellsDrawn;
                         }
                         continue;
                     }
 
-                    // CASO B: Celda de objeto -> Detectar contorno exterior (vacio/suelo) o superposicion.
+                    // CASO B: Celda de objeto -> Outline negro alineado al sub-pixel exacto del glifo.
                     if (!(cell.flags & CellFlags::WANTS_OUTLINE)) {
                         continue;
                     }
@@ -211,19 +271,23 @@ namespace AsciiEngine {
                         unsigned char uc = static_cast<unsigned char>(cell.glyph);
                         if (uc <= 32 || uc >= 127) continue;
 
-                        if ((cell.flags & CellFlags::IS_GROUND) && (cell.flags & CellFlags::IS_SILHOUETTE)) {
-                            continue;
-                        }
-
                         const Rectangle& src = lut[uc];
                         float destW = (src.width > 0.0f) ? (src.width * scaleFactor) : (drawHeight * glyphAspectRatio);
                         float destH = (src.height > 0.0f) ? (src.height * scaleFactor) : drawHeight;
                         Vector2 origin = { destW * 0.5f, destH * 0.5f };
 
-                        DrawTexturePro(font.texture, src, { centerX - px, centerY, destW, destH }, origin, 0.0f, BLACK);
-                        DrawTexturePro(font.texture, src, { centerX + px, centerY, destW, destH }, origin, 0.0f, BLACK);
-                        DrawTexturePro(font.texture, src, { centerX, centerY - px, destW, destH }, origin, 0.0f, BLACK);
-                        DrawTexturePro(font.texture, src, { centerX, centerY + px, destW, destH }, origin, 0.0f, BLACK);
+                        // Dibujamos el contorno exactamente detras de la posicion sub-pixel del glifo.
+                        const float drawX = centerX + static_cast<float>(cell.subOffsetX) * subScale;
+                        const float drawY = centerY + static_cast<float>(cell.subOffsetY) * subScale;
+
+                        const Color outlineCol = {
+                            style.pixelOutlineColor.r, style.pixelOutlineColor.g,
+                            style.pixelOutlineColor.b, style.pixelOutlineColor.a
+                        };
+                        DrawTexturePro(font.texture, src, { drawX - px, drawY, destW, destH }, origin, 0.0f, outlineCol);
+                        DrawTexturePro(font.texture, src, { drawX + px, drawY, destW, destH }, origin, 0.0f, outlineCol);
+                        DrawTexturePro(font.texture, src, { drawX, drawY - px, destW, destH }, origin, 0.0f, outlineCol);
+                        DrawTexturePro(font.texture, src, { drawX, drawY + px, destW, destH }, origin, 0.0f, outlineCol);
                         ++stats.outlineCellsDrawn;
                     }
                 }
@@ -231,7 +295,7 @@ namespace AsciiEngine {
         }
 
         // =========================================================================
-        // PASE 2: DIBUJADO LIMPIO DE GLIFOS (TERRENO + OBJETOS, ZERO OVERDRAW)
+        // PASE 2: DIBUJADO LIMPIO DE GLIFOS EN POSICION SUB-PIXEL (ZERO OVERDRAW)
         // =========================================================================
         for (int cy = 0; cy < m_gridHeight; ++cy) {
             const float centerY = (static_cast<float>(cy) - 0.5f) * m_cellHeight - m_scrollOffsetY;
@@ -243,11 +307,16 @@ namespace AsciiEngine {
                 if (uc <= 32 || uc >= 127) {
                     continue;
                 }
+                if ((cell.flags & CellFlags::IS_GROUND) && (cell.flags & CellFlags::IS_SILHOUETTE)) {
+                    continue;
+                }
 
                 const Rectangle& src = lut[uc];
                 float destW = (src.width > 0.0f) ? (src.width * scaleFactor) : (drawHeight * glyphAspectRatio);
                 float destH = (src.height > 0.0f) ? (src.height * scaleFactor) : drawHeight;
-                float centerX = (static_cast<float>(cx) - 0.5f) * m_cellWidth - m_scrollOffsetX;
+                const float drawX = (static_cast<float>(cx) - 0.5f) * m_cellWidth - m_scrollOffsetX
+                    + static_cast<float>(cell.subOffsetX) * subScale;
+                const float drawY = centerY + static_cast<float>(cell.subOffsetY) * subScale;
                 Vector2 origin = { destW * 0.5f, destH * 0.5f };
 
                 Color drawCol = { cell.color.r, cell.color.g, cell.color.b, cell.color.a };
@@ -257,7 +326,7 @@ namespace AsciiEngine {
                     drawCol.b = static_cast<unsigned char>(static_cast<float>(drawCol.b) * style.overlapDarkenFactor);
                 }
 
-                DrawTexturePro(font.texture, src, { centerX, centerY, destW, destH }, origin, 0.0f, drawCol);
+                DrawTexturePro(font.texture, src, { drawX, drawY, destW, destH }, origin, 0.0f, drawCol);
                 ++stats.glyphsRendered;
             }
         }

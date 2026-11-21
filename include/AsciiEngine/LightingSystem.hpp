@@ -4,6 +4,7 @@
  *
  * @details Emplea un mapa de alturas 2D (Heightfield) construido al cargar el mapa para proyectar
  * sombras direccionales en O(1) sin raytracing 3D ni asignaciones en el bucle principal.
+ * Dia-Noche, GI Hemisferica, Luces, Sombras 2.5D, Nieve y Agua.
  */
 #pragma once
 
@@ -16,6 +17,7 @@ namespace AsciiEngine {
 
     class World;
     class MaterialSystem;
+    struct SurfaceZone;
 
     // Configuracion del ciclo astronomico de 24 horas (leida desde map JSON).
     struct DayNightConfig {
@@ -47,15 +49,12 @@ namespace AsciiEngine {
         ColorRGBA lightColor = { 255, 248, 230, 255 };
         float     lightIntensity = 1.0f;
         bool      isNight = false;
-
         // Colores ambientales modulados por la hora del dia.
         ColorRGBA skyAmbient = { 150, 180, 215, 255 };
-        ColorRGBA groundAmbient = { 35, 45, 35, 255 };
+        ColorRGBA groundAmbient = { 10, 10, 10, 255 };
         float     ambientStrength = 0.32f;
-
         // Color de fondo dinamico modulado desde el gris oscuro neutro base.
-        ColorRGBA backgroundColor = { 30, 32, 36, 255 };
-
+        ColorRGBA backgroundColor = { 8, 8, 8, 255 };
         // Oscurecimiento de zonas en sombra (mas suave de noche bajo la luna).
         float     shadowDarkness = 0.34f;
     };
@@ -84,11 +83,10 @@ namespace AsciiEngine {
             const GlobalIlluminationConfig& gi,
             const std::vector<PointLight>& mapLights);
 
-        // Construye el mapa de alturas 2D a partir de los objetos opacos del mapa (una vez por carga).
-        void BuildShadowHeightfield(const World& world, const MaterialSystem& materials, float cellSizeWorld = 1.0f);
+        void BuildShadowHeightfield(const World& world, const MaterialSystem& materials, float cellSizeWorld = 0.6f);
 
-        // Avanza el ciclo dia-noche y precalcula el estado del sol/luna, GI y color de fondo.
-        void Update(float dt);
+        // Avanza el ciclo dia-noche aplicando los modificadores climaticos activos (Fase 5).
+        void Update(float dt, const WeatherModifiers& weatherMod = {});
 
         // Filtra las luces estaticas dentro del area visible + anade la antorcha dinamica si se provee.
         void PrepareFrameLights(float minWX, float maxWX, float minWY, float maxWY,
@@ -107,7 +105,16 @@ namespace AsciiEngine {
         // Sombreado rapido especializado para el terreno base (Z = 0, normal = (0, 0, 1)).
         ShadedAtom ShadeGroundPoint(Vec3 worldPt, float terrainNoise, bool receiveShadows) const;
 
-        // Controles interactivos de tiempo y sombras.
+        // Sombreado de superficie de agua con oleaje ASCII, brillos de luz y sombras.
+        ShadedAtom ShadeWaterPoint(Vec3 worldPt, ColorRGBA deepCol, ColorRGBA shallowCol,
+            float depthFactor, float waveSpeed, bool receiveShadows) const;
+
+        // Sombreado para objetos de suelo transitables (puentes, pisos de casas, rejillas sci-fi).
+        ShadedAtom ShadeSurfacePoint(Vec3 worldPt, const SurfaceZone& zone, float noise, bool receiveShadows) const;
+
+        // Sombreado liviano para pasto y flores interactivas (soporta sombras, nieve y luces puntuales).
+        ColorRGBA ShadeFoliageColor(Vec3 worldPt, ColorRGBA baseColor, bool receiveShadows) const;
+
         void AdjustTimeHours(float deltaHours);
         void ToggleCycleRunning() { m_dayNight.enabled = !m_dayNight.enabled; }
         void ToggleShadows() { m_shadowsEnabled = !m_shadowsEnabled; }
@@ -119,7 +126,7 @@ namespace AsciiEngine {
         const SunState& GetSunState() const { return m_sunState; }
         const std::vector<ActiveFrameLight>& GetActiveLights() const { return m_activeLights; }
         const std::vector<PointLight>& GetMapLights() const { return m_mapLights; }
-        size_t                              GetHeightfieldBytes() const;
+        size_t                               GetHeightfieldBytes() const;
 
     private:
         void RecomputeSunState();
@@ -128,6 +135,7 @@ namespace AsciiEngine {
         DayNightConfig           m_dayNight;
         GlobalIlluminationConfig m_giConfig;
         std::vector<PointLight>  m_mapLights;
+        WeatherModifiers         m_weatherMod;
 
         // Lista reutilizable de luces visibles este frame (cero asignaciones en el bucle).
         std::vector<ActiveFrameLight> m_activeLights;
@@ -139,8 +147,8 @@ namespace AsciiEngine {
         // Mapa de alturas 2D (Heightfield) para sombras 2.5D rapidas.
         float              m_hfOriginX = -140.0f;
         float              m_hfOriginY = -140.0f;
-        float              m_hfCellSize = 1.0f;
-        float              m_hfInvCellSize = 1.0f;
+        float              m_hfCellSize = 0.6f;
+        float              m_hfInvCellSize = 1.0f / 0.6f;
         int                m_hfWidth = 0;
         int                m_hfHeight = 0;
         float              m_hfMaxWorldZ = 0.0f; // Permite salida temprana al trazar rayos.

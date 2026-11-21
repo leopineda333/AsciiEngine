@@ -66,6 +66,10 @@ namespace AsciiEngine::MathIso {
     // Hash pseudoaleatorio determinista en [0.0, 1.0) a partir de una coordenada 3D y semilla.
     float Hash3D(float x, float y, float z, float seed);
 
+    // Ruido de valor 2D suave [0.0, 1.0] mediante interpolacion bilineal con smoothstep.
+    // Ideal para agrupar praderas, claros de tierra y cumulos organicos sin texturas.
+    float ValueNoise2D(float x, float y, float seed);
+
     // --- Primitivas SDF Base (Signed Distance Functions) ---
 
     // Evalua un elipsoide centrado en el origen con radios (rx, ry, rz).

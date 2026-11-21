@@ -2,12 +2,14 @@
  * @file World.hpp
  * @brief Definicion de Prefabs horneados (Flyweight), Instancias, Config de iluminacion y Colisiones.
  * @details Mantiene desacoplados los datos geometricos (BakedPrefab) de su colocacion
- * espacial (MapInstance). 500 arboles identicos comparten una sola nube de puntos en RAM.
+ * espacial (MapInstance). 500 arboles identicos comparten una sola nube de puntos en RAM
+ * y la lectura de `biomeId`, `weather`, `wind` y `waterZones` en `World`.
  */
 #pragma once
 
 #include <AsciiEngine/Types.hpp>
 #include <AsciiEngine/LightingSystem.hpp>
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -38,8 +40,8 @@ namespace AsciiEngine {
     struct ColliderDef {
         ColliderType type = ColliderType::NONE;
         float        radius = 0.0f;
-        Vec2         halfSize = { 0.0f, 0.0f };  // Mitad de (ancho, profundidad) en BOX / ARCH_PILLARS.
-        float        openingWidth = 0.0f;            // Ancho del hueco transitable en ARCH_PILLARS.
+        Vec2         halfSize = { 0.0f, 0.0f };
+        float        openingWidth = 0.0f;
     };
 
     // Atomo individual precalculado durante el Point-Cloud Baking (32 bytes compactos).
@@ -73,7 +75,71 @@ namespace AsciiEngine {
         MaterialId overrideMaterialId = FALLBACK_MATERIAL_ID;
     };
 
-    // Entidad fisica simple (en Fase 3 representa al jugador de prueba para validar colisiones).
+    // Zona rectangular de agua definida en el mapa JSON (soporta oleaje y reflejos).
+    struct WaterZone {
+        float     minX = 0.0f;
+        float     maxX = 0.0f;
+        float     minY = 0.0f;
+        float     maxY = 0.0f;
+        ColorRGBA deepColor = { 18, 52, 74, 255 };
+        ColorRGBA shallowColor = { 42, 108, 138, 255 };
+        float     waveSpeed = 2.6f;
+
+        bool Contains(float wx, float wy) const {
+            return wx >= minX && wx <= maxX && wy >= minY && wy <= maxY;
+        }
+
+        float ComputeDepthFactor(float wx, float wy) const {
+            float dx = std::min(wx - minX, maxX - wx);
+            float dy = std::min(wy - minY, maxY - wy);
+            float edgeDist = std::min(dx, dy);
+            return std::min(1.0f, std::max(0.0f, edgeDist / 2.2f));
+        }
+    };
+
+    // Patrones procedurales modulares para objetos de suelo transitables (puentes, casas, cubiertas sci-fi).
+    enum class SurfacePattern : uint8_t {
+        NOISE = 0,
+        PLANKS_X = 1, // Tablas alineadas al eje X (puentes / tarimas).
+        PLANKS_Y = 2, // Tablas alineadas al eje Y.
+        GRID = 3, // Baldosas, losas de piedra o paneles metalicos sci-fi.
+        CHECKER = 4  // Patron ajedrezado o losetas alternadas.
+    };
+
+    // Objeto de suelo transitable definido en JSON (colocable en el futuro Editor).
+    struct SurfaceZone {
+        std::string    id;
+        float          minX = 0.0f;
+        float          maxX = 0.0f;
+        float          minY = 0.0f;
+        float          maxY = 0.0f;
+        float          elevationZ = 0.05f;
+        ColorRGBA      primaryColor = { 118, 86, 58, 255 };
+        ColorRGBA      secondaryColor = { 86, 60, 40, 255 };
+        std::string    glyphs = "=#-";
+        SurfacePattern pattern = SurfacePattern::GRID;
+        bool           suppressFoliage = true; // Impide que crezca pasto/flores atravesando el piso.
+        bool           walkableOverWater = true; // Permite crear puentes sobre WaterZones.
+
+        bool Contains(float wx, float wy) const {
+            return wx >= minX && wx <= maxX && wy >= minY && wy <= maxY;
+        }
+    };
+
+    // Bitflags de la grilla 2D de ocupacion del terreno (1 byte por celda).
+    namespace GroundMaskFlags {
+        constexpr uint8_t CLEAR = 0;
+        constexpr uint8_t OBJECT_FOOTPRINT = 1 << 0; // Hay arbol, roca o estructura encima.
+        constexpr uint8_t WATER = 1 << 1; // Celda cubierta por agua.
+        constexpr uint8_t SURFACE_OVERRIDE = 1 << 2; // Celda cubierta por piso/puente artificial.
+    }
+
+    struct WorldWindConfig {
+        float directionDeg = 45.0f;
+        float baseSpeed = 2.2f;
+        float gustStrength = 1.0f;
+    };
+
     struct SimpleActor {
         Vec2  position = { 0.0f, 0.0f };
         Vec2  velocity = { 0.0f, 0.0f };
@@ -86,9 +152,7 @@ namespace AsciiEngine {
 
     class World {
     public:
-        // Escanea y hornea todos los archivos .json dentro de assets/data/objects/.
         bool LoadObjectsDirectory(const std::string& objectsDir, const MaterialSystem& materials);
-
         // Carga instancias explicitas, grupos procedurales (scatterGroups) y spawn desde un mapa JSON.
         bool LoadMapFromFile(const std::string& mapPath, SpatialHashGrid& spatialGrid);
 
@@ -97,30 +161,70 @@ namespace AsciiEngine {
             SpatialHashGrid& spatialGrid,
             MaterialId overrideMat = FALLBACK_MATERIAL_ID);
 
+        // Construye la mascara 2D O(1) estampando objetos, agua y superficies transitables.
+        void RebuildGroundMask(float cellSizeWorld = 0.5f);
+
+        // Consulta O(1): devuelve true SOLO si no hay objeto, agua ni superficie que suprima pasto.
+        bool CanSpawnGroundFoliageAt(float worldX, float worldY) const;
+
         PrefabId GetPrefabId(std::string_view id) const;
         const BakedPrefab* GetPrefab(PrefabId id) const;
 
-        const std::vector<BakedPrefab>& GetPrefabs() const { return m_prefabs; }
-        const std::vector<MapInstance>& GetInstances() const { return m_instances; }
+        // Consultas rapidas sobre zonas de agua y superficies para sombreado de piso y culling de reflejos.
+        const WaterZone* FindWaterZoneAt(float worldX, float worldY) const;
+        const SurfaceZone* FindSurfaceZoneAt(float worldX, float worldY) const;
+        bool IsNearAnyWater(float worldX, float worldY, float margin) const;
+
+        const std::vector<BakedPrefab>& GetPrefabs() const      { return m_prefabs; }
+        const std::vector<MapInstance>& GetInstances() const    { return m_instances; }
+        const std::vector<WaterZone>&   GetWaterZones() const   { return m_waterZones; }
+        const std::vector<SurfaceZone>& GetSurfaceZones() const { return m_surfaceZones; }
 
         // Datos de iluminacion leidos del mapa JSON (entregados a LightingSystem).
-        const DayNightConfig& GetDayNightConfig() const { return m_dayNightConfig; }
-        const GlobalIlluminationConfig& GetGIConfig() const { return m_giConfig; }
-        const std::vector<PointLight>& GetMapLights() const { return m_mapLights; }
+        const DayNightConfig&           GetDayNightConfig() const   { return m_dayNightConfig; }
+        const GlobalIlluminationConfig& GetGIConfig() const         { return m_giConfig; }
+        const std::vector<PointLight>&  GetMapLights() const        { return m_mapLights; }
+        const WorldWindConfig&          GetWindConfig() const       { return m_windConfig; }
 
-        Vec2   GetPlayerSpawn() const { return m_playerSpawn; }
-        float  GetWorldHalfSize() const { return m_worldHalfSize; }
-        float  GetChunkSize() const { return m_chunkSize; }
+        const std::string& GetBiomeId() const           { return m_biomeId; }
+        const std::string& GetInitialWeatherId() const  { return m_initialWeatherId; }
+        bool               GetRandomWeather() const     { return m_randomWeather; }
+
+        Vec2   GetPlayerSpawn() const       { return m_playerSpawn; }
+        float  GetWorldHalfSize() const     { return m_worldHalfSize; }
+        float  GetChunkSize() const         { return m_chunkSize; }
         size_t GetBakedMemoryBytes() const;
+        size_t GetGroundMaskBytes() const   { return m_groundMask.capacity() * sizeof(uint8_t); }
 
     private:
+
+        void StampCircleMask(float cx, float cy, float radius, uint8_t flag);
+        void StampOBBMask(float cx, float cy, Vec2 halfSize, float cosRot, float sinRot, uint8_t flag);
+        void StampRectMask(float minX, float maxX, float minY, float maxY, uint8_t flag);
+
         std::vector<BakedPrefab>                  m_prefabs;
         std::unordered_map<std::string, PrefabId> m_prefabNameToId;
         std::vector<MapInstance>                  m_instances;
+        std::vector<WaterZone>                    m_waterZones;
+        std::vector<SurfaceZone>                  m_surfaceZones;
+
+        // Mascara 2D de ocupacion del suelo (1 byte por celda -> acceso O(1)).
+        float                m_maskOriginX = -140.0f;
+        float                m_maskOriginY = -140.0f;
+        float                m_maskCellSize = 0.5f;
+        float                m_maskInvCellSize = 2.0f;
+        int                  m_maskWidth = 0;
+        int                  m_maskHeight = 0;
+        std::vector<uint8_t> m_groundMask;
 
         DayNightConfig           m_dayNightConfig;
         GlobalIlluminationConfig m_giConfig;
         std::vector<PointLight>  m_mapLights;
+        WorldWindConfig          m_windConfig;
+
+        std::string m_biomeId = "temperate_forest";
+        std::string m_initialWeatherId = "clear_day";
+        bool        m_randomWeather = true;
 
         Vec2  m_playerSpawn = { 0.0f, 0.0f };
         float m_worldHalfSize = 140.0f;
@@ -129,7 +233,6 @@ namespace AsciiEngine {
 
     // Subsistemas de fisica simple y resolucion de colisiones (implementado en CollisionSolver.cpp).
     namespace CollisionSolver {
-
         // Integra movimiento con Euler semi-implicito y resuelve colisiones contra los chunks cercanos.
         // Recibe buffers temporales pre-alojados para garantizar cero asignaciones por frame.
         void UpdateActorPhysics(SimpleActor& actor,

@@ -1,0 +1,26 @@
+{
+  "id": "snow_flakes",
+  "spawnRate": 400.0,
+  "lifetime": {
+    "min": 2.2,
+    "max": 4.2
+  },
+  "velocity": {
+    "min": {
+      "x": -0.7,
+      "y": -0.7,
+      "z": -3.2
+    },
+    "max": {
+      "x": 0.7,
+      "y": 0.7,
+      "z": -1.6
+    }
+  },
+  "gravityZ": -0.35,
+  "windInfluence": 0.72,
+  "collideWithFloor": true,
+  "spawnHighVolume": true,
+  "asciiOverLife": [ "*", "+", ".", "." ],
+  "colorOverLife": [ "#F5FAFF", "#DCE9F7", "#C2D6EB", "#A9C0D9" ]
+}

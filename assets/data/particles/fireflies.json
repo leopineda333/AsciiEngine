@@ -1,0 +1,26 @@
+{
+  "id": "fireflies",
+  "spawnRate": 14.0,
+  "lifetime": {
+    "min": 1.8,
+    "max": 3.5
+  },
+  "velocity": {
+    "min": {
+      "x": -0.7,
+      "y": -0.7,
+      "z": -0.25
+    },
+    "max": {
+      "x": 0.7,
+      "y": 0.7,
+      "z": 0.35
+    }
+  },
+  "gravityZ": 0.0,
+  "windInfluence": 0.18,
+  "collideWithFloor": false,
+  "spawnHighVolume": false,
+  "asciiOverLife": [ ".", "*", "+", "." ],
+  "colorOverLife": [ "#7AB840", "#E8FF7A", "#C4F255", "#4B7526" ]
+}

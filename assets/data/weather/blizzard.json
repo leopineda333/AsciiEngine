@@ -1,0 +1,18 @@
+{
+  "id": "blizzard",
+  "name": "Ventisca",
+  "transitionDuration": 5.0,
+  "bgTint": "#262E38",
+  "bgTintBlend": 0.30,
+  "sunMultiplier": 0.62,
+  "ambientMultiplier": 1.15,
+  "windSpeedRange": {
+    "min": 6.0,
+    "max": 9.5
+  },
+  "windGustStrength": 1.75,
+  "snowTargetCoverage": 1.0,
+  "snowChangeRate": 0.14,
+  "particleTemplateId": "snow_flakes",
+  "weatherParticleRate": 420.0
+}

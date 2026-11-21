@@ -1,9 +1,10 @@
 {
   "worldConfig": {
     "worldHalfSize": 135.0,
+    "biomeId": "temperate_forest",
     "playerSpawn": {
       "x": 0.0,
-      "y": 4.5
+      "y": 0.5
     },
     "culling": { "chunkSize": 24.0 },
     "dayNightCycle": {
@@ -14,9 +15,60 @@
     "globalIllumination": {
       "skyColor": "#B4D2F0",
       "groundColor": "#283626",
-      "ambientStrength": 0.32
+      "ambientStrength": 0.95
+    },
+    "wind": {
+      "directionDeg": 35.0,
+      "baseSpeed": 2.4,
+      "gustStrength": 1.0
+    },
+    "weather": {
+      "currentWeatherId": "clear_day",
+      "randomTransitionsEnabled": true
     }
   },
+  "waterZones": [
+    {
+      "minX": -7.5,
+      "maxX": 4.5,
+      "minY": 8.2,
+      "maxY": 18.5,
+      "deepColor": "#11344D",
+      "shallowColor": "#2C7294",
+      "waveSpeed": 2.8
+    }
+  ],
+
+  "surfaceZones": [
+    {
+      "id": "wood_bridge",
+      "minX": -2.8,
+      "maxX": 0.4,
+      "minY": 7.5,
+      "maxY": 19.2,
+      "elevationZ": 0.08,
+      "primaryColor": "#8C5B38",
+      "secondaryColor": "#5E3A22",
+      "glyphs": "=#-",
+      "pattern": "PLANKS_X",
+      "suppressFoliage": true,
+      "walkableOverWater": true
+    },
+    {
+      "id": "stone_courtyard",
+      "minX": -4.2,
+      "maxX": 4.2,
+      "minY": -8.2,
+      "maxY": -1.8,
+      "elevationZ": 0.03,
+      "primaryColor": "#7B828A",
+      "secondaryColor": "#565C63",
+      "glyphs": ".:+",
+      "pattern": "GRID",
+      "suppressFoliage": true,
+      "walkableOverWater": false
+    }
+  ],
   "lights": [
     {
       "pos": {
@@ -61,6 +113,17 @@
       "intensity": 1.15,
       "radius": 9.5,
       "flicker": false
+    },
+    {
+      "pos": {
+        "x": -1.5,
+        "y": 7.6,
+        "z": 2.2
+      },
+      "color": "#FFA040",
+      "intensity": 1.55,
+      "radius": 11.0,
+      "flicker": true
     }
   ],
   "instances": [
@@ -97,8 +160,8 @@
     {
       "prefabId": "stone_boulder",
       "pos": {
-        "x": 5.5,
-        "y": 7.5,
+        "x": 5.8,
+        "y": 9.5,
         "z": 0.0
       },
       "rotDeg": 70.0,
@@ -123,6 +186,26 @@
       },
       "rotDeg": 45.0,
       "scale": 1.15
+    },
+    {
+      "prefabId": "tree_pine",
+      "pos": {
+        "x": -5.2,
+        "y": 7.2,
+        "z": 0.0
+      },
+      "rotDeg": 20.0,
+      "scale": 1.10
+    },
+    {
+      "prefabId": "tree_pine",
+      "pos": {
+        "x": 2.8,
+        "y": 7.0,
+        "z": 0.0
+      },
+      "rotDeg": 60.0,
+      "scale": 1.00
     }
   ],
   "scatterGroups": [
