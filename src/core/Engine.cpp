@@ -224,12 +224,14 @@ namespace AsciiEngine {
          * @brief Carga la fuente monoespaciada en GPU con mipmaps trilineales y construye la LUT O(1).
          */
         void LoadTypography() {
-            // Puedes anteponer cualquier .ttf propio en assets/fonts/ para distribuirlo junto al ejecutable.
+            // Prioridad: 1) fuente empaquetada con el juego, 2) Windows, 3) distribuciones Linux comunes.
             const char* candidates[] = {
                 "assets/fonts/JetBrainsMono-Regular.ttf",
                 "assets/fonts/SourceCodePro-Regular.ttf",
                 "C:/Windows/Fonts/consola.ttf",
-                "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"
+                "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+                "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf",
+                "/usr/share/fonts/truetype/ubuntu/UbuntuMono-R.ttf"
             };
 
             customFontLoaded = false;
