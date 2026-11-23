@@ -340,8 +340,7 @@ namespace AsciiEngine {
         float dzPerUnit = dir.z * invHoriz;
 
         // Raymarching 2D acotado (maximo 14 pasos x 0.65u = ~9.8u de alcance de sombra):
-        // kStartDist y kSelfBias evitan el "shadow acne" (que un objeto se proyecte sombra sobre si mismo).
-        constexpr int   kMaxSteps = 14;
+        // kStartDist y kSelfBias evitan el "shadow acne" (que un objeto se proyecte sombra sobre si mismo
         constexpr float kStepSize = 0.65f;
         constexpr float kStartDist = 0.70f;
         constexpr float kSelfBias = 0.35f;
