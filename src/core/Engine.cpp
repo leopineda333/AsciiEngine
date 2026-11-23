@@ -44,6 +44,108 @@ namespace AsciiEngine {
         float ElapsedMs(Clock::time_point start, Clock::time_point end) {
             return std::chrono::duration<float, std::milli>(end - start).count();
         }
+
+        /**
+         * @brief Traduce el enum publico AsciiEngine::Key al codigo interno de Raylib.
+         */
+        int ToRaylibKey(Key key) {
+            switch (key) {
+            case Key::W:            return KEY_W;
+            case Key::A:            return KEY_A;
+            case Key::S:            return KEY_S;
+            case Key::D:            return KEY_D;
+            case Key::Q:            return KEY_Q;
+            case Key::E:            return KEY_E;
+            case Key::R:            return KEY_R;
+            case Key::T:            return KEY_T;
+            case Key::M:            return KEY_M;
+            case Key::O:            return KEY_O;
+            case Key::B:            return KEY_B;
+            case Key::G:            return KEY_G;
+            case Key::V:            return KEY_V;
+            case Key::H:            return KEY_H;
+            case Key::K:            return KEY_K;
+            case Key::Num1:         return KEY_ONE;
+            case Key::Num2:         return KEY_TWO;
+            case Key::Num3:         return KEY_THREE;
+            case Key::Num4:         return KEY_FOUR;
+            case Key::Space:        return KEY_SPACE;
+            case Key::Tab:          return KEY_TAB;
+            case Key::Escape:       return KEY_ESCAPE;
+            case Key::Enter:        return KEY_ENTER;
+            case Key::LeftShift:    return KEY_LEFT_SHIFT;
+            case Key::RightShift:   return KEY_RIGHT_SHIFT;
+            case Key::LeftControl:  return KEY_LEFT_CONTROL;
+            case Key::RightControl: return KEY_RIGHT_CONTROL;
+            case Key::Left:         return KEY_LEFT;
+            case Key::Right:        return KEY_RIGHT;
+            case Key::Up:           return KEY_UP;
+            case Key::Down:         return KEY_DOWN;
+            case Key::F1:           return KEY_F1;
+            case Key::F2:           return KEY_F2;
+            case Key::F3:           return KEY_F3;
+            case Key::F4:           return KEY_F4;
+            case Key::F5:           return KEY_F5;
+            default:                return KEY_NULL;
+            }
+        }
+
+        int ToRaylibMouseButton(MouseButton button) {
+            switch (button) {
+            case MouseButton::Left:   return MOUSE_BUTTON_LEFT;
+            case MouseButton::Right:  return MOUSE_BUTTON_RIGHT;
+            case MouseButton::Middle: return MOUSE_BUTTON_MIDDLE;
+            default:                  return MOUSE_BUTTON_LEFT;
+            }
+        }
+
+        int ToRaylibGamepadButton(GamepadButton button) {
+            switch (button) {
+            case GamepadButton::DPadUp:      return GAMEPAD_BUTTON_LEFT_FACE_UP;
+            case GamepadButton::DPadRight:   return GAMEPAD_BUTTON_LEFT_FACE_RIGHT;
+            case GamepadButton::DPadDown:    return GAMEPAD_BUTTON_LEFT_FACE_DOWN;
+            case GamepadButton::DPadLeft:    return GAMEPAD_BUTTON_LEFT_FACE_LEFT;
+            case GamepadButton::FaceUp:      return GAMEPAD_BUTTON_RIGHT_FACE_UP;
+            case GamepadButton::FaceRight:   return GAMEPAD_BUTTON_RIGHT_FACE_RIGHT;
+            case GamepadButton::FaceDown:    return GAMEPAD_BUTTON_RIGHT_FACE_DOWN;
+            case GamepadButton::FaceLeft:    return GAMEPAD_BUTTON_RIGHT_FACE_LEFT;
+            case GamepadButton::LeftBumper:  return GAMEPAD_BUTTON_LEFT_TRIGGER_1;
+            case GamepadButton::RightBumper: return GAMEPAD_BUTTON_RIGHT_TRIGGER_1;
+            case GamepadButton::Select:      return GAMEPAD_BUTTON_MIDDLE_LEFT;
+            case GamepadButton::Start:       return GAMEPAD_BUTTON_MIDDLE_RIGHT;
+            case GamepadButton::LeftStick:   return GAMEPAD_BUTTON_LEFT_THUMB;
+            case GamepadButton::RightStick:  return GAMEPAD_BUTTON_RIGHT_THUMB;
+            default:                         return GAMEPAD_BUTTON_UNKNOWN;
+            }
+        }
+
+        int ToRaylibGamepadAxis(GamepadAxis axis) {
+            switch (axis) {
+            case GamepadAxis::LeftX:        return GAMEPAD_AXIS_LEFT_X;
+            case GamepadAxis::LeftY:        return GAMEPAD_AXIS_LEFT_Y;
+            case GamepadAxis::RightX:       return GAMEPAD_AXIS_RIGHT_X;
+            case GamepadAxis::RightY:       return GAMEPAD_AXIS_RIGHT_Y;
+            case GamepadAxis::LeftTrigger:  return GAMEPAD_AXIS_LEFT_TRIGGER;
+            case GamepadAxis::RightTrigger: return GAMEPAD_AXIS_RIGHT_TRIGGER;
+            default:                        return GAMEPAD_AXIS_LEFT_X;
+            }
+        }
+
+        /**
+         * @brief Aplica deadzone radial escalada para eliminar drift de sticks sin saltos bruscos.
+         * @details Remapea [deadzone .. 1.0] -> [0.0 .. 1.0] conservando direccion exacta en 360 grados.
+         */
+        Vec2 ApplyRadialDeadzone(float x, float y, float deadzone) {
+            float dz = MathIso::Clamp(deadzone, 0.0f, 0.90f);
+            float len = std::sqrt(x * x + y * y);
+            if (len <= dz) {
+                return { 0.0f, 0.0f };
+            }
+            float scaled = MathIso::Clamp((len - dz) / (1.0f - dz), 0.0f, 1.0f);
+            float factor = scaled / len;
+            return { x * factor, y * factor };
+        }
+
     } // namespace anonimo
 
     /**
@@ -78,6 +180,10 @@ namespace AsciiEngine {
         Editor             editor;
 
         bool playerTorchOn = true; // Antorcha dinamica acoplada al foco activo (tecla [T]).
+
+        // Comandos de movimiento inyectados desde el juego cliente para el frame actual.
+        Vec2 pendingScreenMoveInput = { 0.0f, 0.0f };
+        bool pendingSprint = false;
 
         // --- Camara 2D isometrica y rejilla Z-Buffer calibrada (5.5x9.5 px) ---
         Camera2D camera = {};
@@ -871,6 +977,182 @@ namespace AsciiEngine {
         m_impl->lightingSystem.AddTemporaryLight(worldPos, color, intensity, radius, durationSec, fadeOut);
     }
 
+    void Context::HotReload() {
+        if (m_impl->editor.IsEnabled()) {
+            LoadRegistry(m_impl->dataRootPath);
+            m_impl->world.RebuildGroundMask(0.5f);
+            m_impl->lightingSystem.BuildShadowHeightfield(m_impl->world, m_impl->materialSystem, 0.6f);
+            m_impl->editor.ShowToast("Plantillas recargadas (F5)", 2.0f);
+        }
+        else {
+            float savedHr = m_impl->lightingSystem.GetTimeHours();
+            LoadRegistry(m_impl->dataRootPath);
+            if (!m_impl->activeMapPath.empty()) {
+                LoadMap(m_impl->activeMapPath);
+                m_impl->lightingSystem.AdjustTimeHours(savedHr - m_impl->lightingSystem.GetTimeHours());
+            }
+        }
+    }
+
+    // --- Entrada encapsulada ---
+
+    bool Context::IsKeyDown(Key key) const {
+        return ::IsKeyDown(ToRaylibKey(key));
+    }
+
+    bool Context::IsKeyPressed(Key key) const {
+        return ::IsKeyPressed(ToRaylibKey(key));
+    }
+
+    bool Context::IsMouseButtonDown(MouseButton button) const {
+        return ::IsMouseButtonDown(ToRaylibMouseButton(button));
+    }
+
+    bool Context::IsMouseButtonPressed(MouseButton button) const {
+        return ::IsMouseButtonPressed(ToRaylibMouseButton(button));
+    }
+
+    float Context::GetMouseWheelDelta() const {
+        return ::GetMouseWheelMove();
+    }
+
+    Vec2 Context::GetCursorWorldPosition() const {
+        Vector2 mp = ::GetMousePosition();
+        return MathIso::IsoToWorldGround(m_impl->ScreenToIso({ mp.x, mp.y }), m_impl->isoConfig);
+    }
+
+    bool Context::IsGamepadAvailable(int gamepadIndex) const {
+        return ::IsGamepadAvailable(gamepadIndex);
+    }
+
+    bool Context::IsGamepadButtonDown(GamepadButton button, int gamepadIndex) const {
+        if (!::IsGamepadAvailable(gamepadIndex)) return false;
+        return ::IsGamepadButtonDown(gamepadIndex, ToRaylibGamepadButton(button));
+    }
+
+    bool Context::IsGamepadButtonPressed(GamepadButton button, int gamepadIndex) const {
+        if (!::IsGamepadAvailable(gamepadIndex)) return false;
+        return ::IsGamepadButtonPressed(gamepadIndex, ToRaylibGamepadButton(button));
+    }
+
+    float Context::GetGamepadAxis(GamepadAxis axis, int gamepadIndex) const {
+        if (!::IsGamepadAvailable(gamepadIndex)) return 0.0f;
+        float raw = ::GetGamepadAxisMovement(gamepadIndex, ToRaylibGamepadAxis(axis));
+
+        // En GLFW/Raylib los gatillos reposan en -1.0 y llegan a +1.0 al presionarse:
+        // los normalizamos a [0.0 .. 1.0] para una API intuitiva y consistente.
+        if (axis == GamepadAxis::LeftTrigger || axis == GamepadAxis::RightTrigger) {
+            return MathIso::Clamp((raw + 1.0f) * 0.5f, 0.0f, 1.0f);
+        }
+        return MathIso::Clamp(raw, -1.0f, 1.0f);
+    }
+
+    Vec2 Context::GetGamepadLeftStick(int gamepadIndex, float deadzone) const {
+        if (!::IsGamepadAvailable(gamepadIndex)) return { 0.0f, 0.0f };
+        float x = ::GetGamepadAxisMovement(gamepadIndex, GAMEPAD_AXIS_LEFT_X);
+        float y = ::GetGamepadAxisMovement(gamepadIndex, GAMEPAD_AXIS_LEFT_Y);
+        return ApplyRadialDeadzone(x, y, deadzone);
+    }
+
+    Vec2 Context::GetGamepadRightStick(int gamepadIndex, float deadzone) const {
+        if (!::IsGamepadAvailable(gamepadIndex)) return { 0.0f, 0.0f };
+        float x = ::GetGamepadAxisMovement(gamepadIndex, GAMEPAD_AXIS_RIGHT_X);
+        float y = ::GetGamepadAxisMovement(gamepadIndex, GAMEPAD_AXIS_RIGHT_Y);
+        return ApplyRadialDeadzone(x, y, deadzone);
+    }
+
+    // --- Control de personajes ---
+
+    void Context::SetControlledMoveInput(Vec2 screenInputDir, bool sprint) {
+        m_impl->pendingScreenMoveInput = screenInputDir;
+        m_impl->pendingSprint = sprint;
+    }
+
+    void Context::TriggerControlledAttack() {
+        m_impl->characterSystem.TriggerPlayerAttack();
+    }
+
+    void Context::CycleControlledCharacter() {
+        m_impl->characterSystem.CycleControlledCharacter();
+    }
+
+    bool Context::SpawnCharacter(const std::string& templateId, Vec2 worldPos, float facingDeg,
+        bool isPlayer, float wanderRadius, float scale) {
+        return m_impl->characterSystem.SpawnCharacter(templateId, worldPos, facingDeg, isPlayer, wanderRadius, scale);
+    }
+
+    Vec2 Context::GetControlledPosition() const {
+        if (const CharacterInstance* ch = m_impl->characterSystem.GetControlledCharacter()) {
+            return ch->actor.position;
+        }
+        return m_impl->world.GetPlayerSpawn();
+    }
+
+    float Context::GetControlledFacingRad() const {
+        if (const CharacterInstance* ch = m_impl->characterSystem.GetControlledCharacter()) {
+            return ch->actor.facingAngleRad;
+        }
+        return 0.0f;
+    }
+
+    // --- Camara ---
+
+    void Context::AdjustCameraZoom(float delta) {
+        SetCameraZoom(m_impl->camera.zoom + delta);
+    }
+
+    void Context::SetCameraZoom(float zoom) {
+        m_impl->camera.zoom = MathIso::Clamp(zoom, m_impl->minZoom, m_impl->maxZoom);
+    }
+
+    float Context::GetCameraZoom() const {
+        return m_impl->camera.zoom;
+    }
+
+    // --- Entorno, clima e iluminacion ---
+
+    void Context::SetTimeOfDay(float hours) {
+        m_impl->lightingSystem.SetTimeHours(hours);
+    }
+
+    void Context::AdjustTimeOfDay(float deltaHours) {
+        m_impl->lightingSystem.AdjustTimeHours(deltaHours);
+    }
+
+    void Context::ToggleDayNightCycle() {
+        m_impl->lightingSystem.ToggleCycleRunning();
+    }
+
+    void Context::SetPlayerTorchEnabled(bool enabled) {
+        m_impl->playerTorchOn = enabled;
+    }
+
+    bool Context::IsPlayerTorchEnabled() const {
+        return m_impl->playerTorchOn;
+    }
+
+    void Context::TransitionWeather(const std::string& weatherId) {
+        m_impl->weatherSystem.TransitionToWeather(weatherId);
+    }
+
+    void Context::CycleBiome() {
+        m_impl->weatherSystem.CycleBiome();
+    }
+
+    void Context::ToggleRandomWeather() {
+        m_impl->weatherSystem.ToggleRandomTransitions();
+    }
+
+    // --- Herramientas integradas ---
+
+    bool Context::IsEditorEnabled() const {
+        return m_impl->editor.IsEnabled();
+    }
+
+    void Context::ToggleDebugOverlays() {
+        m_impl->debugHUD.ToggleOverlays();
+    }
+
     bool Context::IsRunning() const {
         return m_impl->initialized && !WindowShouldClose();
     }
@@ -888,17 +1170,12 @@ namespace AsciiEngine {
         m_impl->camera.offset = { m_impl->screenWidth * 0.5f, m_impl->screenHeight * 0.5f };
         m_impl->zBuffer.Resize(m_impl->screenWidth, m_impl->screenHeight, m_impl->cellWidthPx, m_impl->cellHeightPx);
 
-        // Alternar entre Modo Juego y Modo Editor Visual [F1].
-        if (IsKeyPressed(KEY_F1)) {
-            ToggleEditorMode();
-        }
-
         const bool inEditor = m_impl->editor.IsEnabled();
         Vec2       desiredWorldDir = { 0.0f, 0.0f };
         bool       playerSprint = false;
 
         // =========================================================================
-        // ETAPA 1: ENTRADA DESACOPLADA (MODO EDITOR VS MODO JUEGO)
+        // ETAPA 1: MODO EDITOR VS COMANDOS DE GAMEPLAY RECIBIDOS DEL CLIENTE
         // =========================================================================
         if (inEditor) {
             Vec2 camTarget = { m_impl->camera.target.x, m_impl->camera.target.y };
@@ -916,80 +1193,38 @@ namespace AsciiEngine {
             m_impl->camera.target = { camTarget.x, camTarget.y };
             m_impl->ProcessEditorRequests(ectx);
 
-            // En Modo Editor, F5 recarga las plantillas JSON del disco preservando el escenario editado en RAM.
-            if (ectx.requestHotReload || IsKeyPressed(KEY_F5)) {
-                LoadRegistry(m_impl->dataRootPath);
-                m_impl->world.RebuildGroundMask(0.5f);
-                m_impl->lightingSystem.BuildShadowHeightfield(m_impl->world, m_impl->materialSystem, 0.6f);
-                m_impl->editor.ShowToast("Plantillas recargadas (F5)", 2.0f);
+            if (ectx.requestHotReload) {
+                HotReload();
             }
             if (ectx.requestReloadMap && !m_impl->activeMapPath.empty()) {
                 LoadMap(m_impl->activeMapPath);
             }
         }
         else {
-            // Traducimos WASD (ejes de pantalla) al plano cartesiano del mundo isometrico.
-            Vec2 screenInput = { 0.0f, 0.0f };
-            if (IsKeyDown(KEY_W)) screenInput.y -= 1.0f;
-            if (IsKeyDown(KEY_S)) screenInput.y += 1.0f;
-            if (IsKeyDown(KEY_A)) screenInput.x -= 1.0f;
-            if (IsKeyDown(KEY_D)) screenInput.x += 1.0f;
-
-            if (IsKeyPressed(KEY_TAB)) m_impl->characterSystem.CycleControlledCharacter();
-            if (IsKeyPressed(KEY_E)) {
-                m_impl->characterSystem.TriggerPlayerAttack();
-                if (const CharacterInstance* ch = m_impl->characterSystem.GetControlledCharacter()) {
-                    float fx = ch->actor.position.x + std::cos(ch->actor.facingAngleRad) * 1.15f;
-                    float fy = ch->actor.position.y + std::sin(ch->actor.facingAngleRad) * 1.15f;
-                    SpawnParticleBurst("impact_burst", { fx, fy, 1.15f }, 16, { 0.25f, 0.25f, 0.20f });
-                    AddTemporaryLight({ fx, fy, 1.45f }, { 255, 200, 115, 255 }, 2.2f, 9.5f, 0.34f, true);
+            // Proyectamos la direccion de pantalla al plano del mundo preservando la magnitud analogica [0..1].
+            float screenMag = std::sqrt(m_impl->pendingScreenMoveInput.x * m_impl->pendingScreenMoveInput.x +
+                m_impl->pendingScreenMoveInput.y * m_impl->pendingScreenMoveInput.y);
+            if (screenMag > 1e-4f) {
+                Vec2 rawWorld = MathIso::IsoToWorldGround(m_impl->pendingScreenMoveInput, m_impl->isoConfig);
+                float wLen = std::sqrt(rawWorld.x * rawWorld.x + rawWorld.y * rawWorld.y);
+                if (wLen > 1e-5f) {
+                    float throttle = std::min(1.0f, screenMag);
+                    desiredWorldDir = { (rawWorld.x / wLen) * throttle, (rawWorld.y / wLen) * throttle };
                 }
             }
-
-            desiredWorldDir = MathIso::IsoToWorldGround(screenInput, m_impl->isoConfig);
-            playerSprint = IsKeyDown(KEY_LEFT_SHIFT);
-
-            float wheel = GetMouseWheelMove();
-            if (wheel != 0.0f) {
-                m_impl->camera.zoom = MathIso::Clamp(m_impl->camera.zoom + wheel * 0.12f, m_impl->minZoom, m_impl->maxZoom);
-            }
-
-            if (IsKeyPressed(KEY_SPACE)) m_impl->lightingSystem.ToggleCycleRunning();
-            if (IsKeyDown(KEY_LEFT))     m_impl->lightingSystem.AdjustTimeHours(-dt * 4.5f);
-            if (IsKeyDown(KEY_RIGHT))    m_impl->lightingSystem.AdjustTimeHours(dt * 4.5f);
-            if (IsKeyPressed(KEY_ONE))   m_impl->weatherSystem.TransitionToWeather("clear_day");
-            if (IsKeyPressed(KEY_TWO))   m_impl->weatherSystem.TransitionToWeather("heavy_rain");
-            if (IsKeyPressed(KEY_THREE)) m_impl->weatherSystem.TransitionToWeather("blizzard");
-            if (IsKeyPressed(KEY_M))     m_impl->weatherSystem.CycleBiome();
-            if (IsKeyPressed(KEY_R))     m_impl->weatherSystem.ToggleRandomTransitions();
-
-            // En Modo Juego, F5 recarga tanto plantillas como el mapa JSON conservando la hora actual.
-            if (IsKeyPressed(KEY_F5)) {
-                float savedHr = m_impl->lightingSystem.GetTimeHours();
-                LoadRegistry(m_impl->dataRootPath);
-                if (!m_impl->activeMapPath.empty()) {
-                    LoadMap(m_impl->activeMapPath);
-                    m_impl->lightingSystem.AdjustTimeHours(savedHr - m_impl->lightingSystem.GetTimeHours());
-                }
-            }
+            playerSprint = m_impl->pendingSprint;
         }
 
-        // Atajos visuales y de diagnostico globales (disponibles tanto en Juego como en Editor).
-        if (IsKeyPressed(KEY_H)) { m_impl->settings.enableShadows = !m_impl->settings.enableShadows;                m_impl->SyncSettingsToSubsystems(); }
-        if (IsKeyPressed(KEY_O)) { m_impl->settings.enableOutlines = !m_impl->settings.enableOutlines;              m_impl->SyncSettingsToSubsystems(); }
-        if (IsKeyPressed(KEY_B)) { m_impl->settings.enableAsciiBorder = !m_impl->settings.enableAsciiBorder;        m_impl->SyncSettingsToSubsystems(); }
-        if (IsKeyPressed(KEY_G)) { m_impl->settings.enableSubPixelOffset = !m_impl->settings.enableSubPixelOffset;  m_impl->SyncSettingsToSubsystems(); }
-        if (IsKeyPressed(KEY_V)) { m_impl->settings.enableCellBacking = !m_impl->settings.enableCellBacking;        m_impl->SyncSettingsToSubsystems(); }
-        if (IsKeyPressed(KEY_T))  m_impl->playerTorchOn = !m_impl->playerTorchOn;
-        if (IsKeyPressed(KEY_F3)) m_impl->debugHUD.ToggleTelemetry();
-        if (IsKeyPressed(KEY_F4)) m_impl->debugHUD.ToggleOverlays();
+        // Limpiamos los comandos de un solo frame para que el actor frene suavemente si no llegan nuevos.
+        m_impl->pendingScreenMoveInput = { 0.0f, 0.0f };
+        m_impl->pendingSprint = false;
 
         // =========================================================================
-        // ETAPA 2: FISICA, COLISIONES, IA DE NPCs Y ANIMACION PROCEDURAL
+        // ETAPA 2: FISICA, COLISIONES, IA DE NPCs, FOOTSTEPS Y ANIMACION PROCEDURAL
         // =========================================================================
-        // La nieve acumulada reduce la friccion del terreno de 10.0 a 4.5 (deslizamiento invernal).
-        float groundFriction = MathIso::Lerp(10.0f, 4.5f, m_impl->weatherSystem.GetModifiers().snowCoverage);
+        float           groundFriction = MathIso::Lerp(10.0f, 4.5f, m_impl->weatherSystem.GetModifiers().snowCoverage);
         ParticleSystem* footstepSys = (m_impl->settings.particleDensityScale > 0.01f) ? &m_impl->particleSystem : nullptr;
+
         m_impl->characterSystem.Update(
             dt, desiredWorldDir, playerSprint, groundFriction,
             m_impl->world, m_impl->spatialGrid,
@@ -1018,12 +1253,12 @@ namespace AsciiEngine {
         m_impl->particleSystem.Update(
             dt, m_impl->weatherSystem.GetWind(), sun.isNight, focusPos,
             m_impl->weatherSystem.GetWeatherParticleId(),
-            m_impl->weatherSystem.GetWeatherParticleRate()* m_impl->effectLod.densityScale* m_impl->settings.particleDensityScale
+            m_impl->weatherSystem.GetWeatherParticleRate() * m_impl->effectLod.densityScale * m_impl->settings.particleDensityScale
         );
 
         auto simEnd = Clock::now();
 
-        // Recopilamos las metricas de simulacion para el Debug HUD (F3).
+        // Actualizar telemetria del frame para el Debug HUD (F3).
         auto& t = m_impl->telemetry;
         t.simTimeMs = ElapsedMs(simStart, simEnd);
         t.fps = static_cast<float>(GetFPS());

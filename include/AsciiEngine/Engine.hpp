@@ -4,19 +4,18 @@
  * @file Engine.hpp
  * @brief Fachada publica (Facade + PIMPL) del motor AsciiEngine.
  *
- * @details Este es el UNICO header que necesita incluir un juego o aplicacion cliente para
- * utilizar el motor completo. Al aplicar el idioma PIMPL (Pointer to Implementation) mediante
- * std::unique_ptr<Impl>, ocultamos por completo raylib.h, raygui.h, nlohmann/json y windows.h:
- *   - Tiempos de compilacion minimos en proyectos clientes.
- *   - Cero colisiones de macros o simbolos con otras librerias del usuario.
- *   - Encapsulamiento estricto: cualquier cambio interno en el pipeline no rompe el ABI publico.
+ * @details Unico header necesario para construir un juego o aplicacion sobre AsciiEngine.lib.
+ * Expone ciclo de vida, configuracion grafica (EngineSettings), entrada encapsulada, control de
+ * personajes, camara, entorno, efectos efimeros y herramientas de editor sin filtrar raylib.h,
+ * raygui.h, json.hpp ni windows.h.
  */
 #pragma once
 
-#include <memory> // std::unique_ptr para la propiedad exclusiva de Context::Impl.
-#include <string>
-#include <AsciiEngine/Settings.hpp>
 #include <AsciiEngine/Types.hpp>
+#include <AsciiEngine/Settings.hpp>
+#include <AsciiEngine/Input.hpp>
+#include <memory>
+#include <string>
 
 namespace AsciiEngine {
 
@@ -25,129 +24,103 @@ namespace AsciiEngine {
      */
     class Context {
     public:
-        /**
-         * @brief Reserva el estado interno (Impl) sin abrir aun la ventana grafica.
-         */
         Context();
-
-        /**
-         * @brief Destructor definido en Engine.cpp (requisito de std::unique_ptr con tipo incompleto Impl).
-         * @details Garantiza el cierre limpio de recursos graficos llamando a Shutdown() automaticamente (RAII).
-         */
         ~Context();
 
-        // Un contexto de motor posee recursos unicos de GPU/ventana: prohibimos copias accidentales.
         Context(const Context&) = delete;
         Context& operator=(const Context&) = delete;
 
-        /**
-         * @brief Inicializa la ventana grafica, carga la tipografia + LUT O(1) y dimensiona el AsciiZBuffer.
-         * @param width  Ancho inicial de la ventana en pixeles.
-         * @param height Alto inicial de la ventana en pixeles.
-         * @param title  Titulo mostrado en la barra de la ventana.
-         * @return true si el contexto OpenGL/Raylib quedo listo para operar.
-         */
+        // --- Ciclo de vida y datos ---
         bool Initialize(int width, int height, const char* title);
-
-        /**
-         * @brief Carga y hornea todas las plantillas data-driven desde la raiz de datos (ej. "assets/data").
-         * @details Escanea automaticamente: materials/, objects/, characters/, biomes/, weather/ y particles/.
-         *          Soporta invocacion repetida en caliente (Hot-Reload con F5).
-         */
         bool LoadRegistry(const std::string& dataRoot);
-
-        /**
-         * @brief Carga un mapa JSON, construye el SpatialHashGrid, la GroundMask O(1) y el Heightfield 2.5D.
-         */
         bool LoadMap(const std::string& mapPath);
-
-        /**
-         * @brief Serializa el estado completo actual del escenario (instancias, luces, zonas, entidades, clima) a JSON.
-         */
         bool SaveMap(const std::string& mapPath) const;
 
         /**
-         * @brief Devuelve la configuracion grafica y de simulacion activa del motor.
+         * @brief Recarga plantillas JSON desde disco en caliente.
+         * @details En Modo Editor conserva los cambios en RAM; en Modo Juego recarga tambien el mapa
+         *          manteniendo la hora actual del ciclo Dia-Noche.
          */
+        void HotReload();
+
+        // --- Configuracion grafica y presets (v1.1.0) ---
         const EngineSettings& GetSettings() const;
-
-        /**
-         * @brief Aplica en tiempo real una configuracion personalizada a todos los subsistemas.
-         */
         void ApplySettings(const EngineSettings& settings);
-
-        /**
-         * @brief Aplica de golpe un perfil precalibrado (LOW, MEDIUM, HIGH o ULTRA).
-         */
         void ApplyQualityPreset(QualityPreset preset);
-
-        /**
-         * @brief Carga ajustes de usuario desde un archivo JSON y los aplica de inmediato.
-         */
         bool LoadSettings(const std::string& jsonPath);
-
-        /**
-         * @brief Guarda la configuracion actual del motor en un archivo JSON de usuario.
-         */
         bool SaveSettings(const std::string& jsonPath) const;
 
-        /**
-         * @brief Alterna entre el Modo Juego y el Editor Visual de Mapas embebido (tecla [F1]).
-         */
-        void ToggleEditorMode();
+        // --- Entrada encapsulada (sin raylib.h en el juego cliente) ---
+        bool  IsKeyDown(Key key) const;
+        bool  IsKeyPressed(Key key) const;
+        bool  IsMouseButtonDown(MouseButton button) const;
+        bool  IsMouseButtonPressed(MouseButton button) const;
+        float GetMouseWheelDelta() const;
 
         /**
-         * @brief Alterna la visibilidad del panel de telemetria en tiempo real (tecla [F3]).
+         * @brief Raycast inverso desde el cursor actual del raton hacia el plano del suelo (Z = 0).
          */
-        void ToggleDebugHUD();
+        Vec2  GetCursorWorldPosition() const;
 
+        // --- Gamepad nativo (soporte multi-mando con deadzone radial y gatillos normalizados) ---
+        bool  IsGamepadAvailable(int gamepadIndex = 0) const;
+        bool  IsGamepadButtonDown(GamepadButton button, int gamepadIndex = 0) const;
+        bool  IsGamepadButtonPressed(GamepadButton button, int gamepadIndex = 0) const;
+        float GetGamepadAxis(GamepadAxis axis, int gamepadIndex = 0) const;
+        Vec2  GetGamepadLeftStick(int gamepadIndex = 0, float deadzone = 0.16f) const;
+        Vec2  GetGamepadRightStick(int gamepadIndex = 0, float deadzone = 0.16f) const;
+
+        // --- Control de personajes y entidades ---
         /**
-         * @brief Dispara una rafaga instantanea de particulas efimeras (pisadas, impactos, explosiones).
+         * @brief Envia la intencion de movimiento del jugador para el frame actual en ejes de pantalla
+         *        (ej. W => y = -1, D => x = +1). El motor lo proyecta a coordenadas del mundo isometrico.
          */
+        void SetControlledMoveInput(Vec2 screenInputDir, bool sprint = false);
+        void TriggerControlledAttack();
+        void CycleControlledCharacter();
+        bool SpawnCharacter(const std::string& templateId, Vec2 worldPos, float facingDeg = 45.0f,
+            bool isPlayer = false, float wanderRadius = 8.0f, float scale = 1.0f);
+
+        Vec2  GetControlledPosition() const;
+        float GetControlledFacingRad() const;
+
+        // --- Camara ---
+        void  AdjustCameraZoom(float delta);
+        void  SetCameraZoom(float zoom);
+        float GetCameraZoom() const;
+
+        // --- Entorno, clima e iluminacion ---
+        void  SetTimeOfDay(float hours);
+        void  AdjustTimeOfDay(float deltaHours);
+        void  ToggleDayNightCycle();
+        void  SetPlayerTorchEnabled(bool enabled);
+        bool  IsPlayerTorchEnabled() const;
+        void  TransitionWeather(const std::string& weatherId);
+        void  CycleBiome();
+        void  ToggleRandomWeather();
+
+        // --- Efectos efimeros (particulas y luces temporales) ---
         void SpawnParticleBurst(const std::string& templateId, Vec3 worldPos, uint32_t count,
             Vec3 areaHalfExtents = { 0.25f, 0.25f, 0.10f });
-
-        /**
-         * @brief Crea un emisor temporal que emite particulas durante 'durationSec' y luego se elimina solo.
-         */
         void AddTimedParticleEmitter(const std::string& templateId, Vec3 worldPos, Vec3 areaHalfExtents,
             float spawnRate, float durationSec);
-
-        /**
-         * @brief Crea una luz puntual temporal con fade-out (destellos de golpe, magia o explosiones).
-         */
         void AddTemporaryLight(Vec3 worldPos, ColorRGBA color, float intensity, float radius,
             float durationSec, bool fadeOut = true);
 
-        /**
-         * @brief Indica si el motor sigue activo (inicializado y sin solicitud de cierre de ventana).
-         */
-        bool IsRunning() const;
+        // --- Herramientas integradas (Editor Visual y Depuracion) ---
+        void ToggleEditorMode();
+        bool IsEditorEnabled() const;
+        void ToggleDebugHUD();
+        void ToggleDebugOverlays();
 
-        /**
-         * @brief Devuelve el tiempo transcurrido del ultimo frame en segundos (delta time).
-         */
+        // --- Bucle principal ---
+        bool  IsRunning() const;
         float GetFrameTime() const;
-
-        /**
-         * @brief Ejecuta las Etapas 1 a 4 del pipeline: entrada, fisica, IA, animacion, clima, iluminacion y particulas.
-         */
-        void Update(float dt);
-
-        /**
-         * @brief Ejecuta las Etapas 5 a 8 del pipeline: Culling 3 capas, Z-Buffer World-Locked, Batch GPU, Overlays y UI.
-         */
-        void Render() const;
-
-        /**
-         * @brief Libera la fuente en VRAM y cierra la ventana grafica de forma idempotente (seguro llamarlo varias veces).
-         */
-        void Shutdown();
-
-        
+        void  Update(float dt);
+        void  Render() const;
+        void  Shutdown();
 
     private:
-        // Declaracion adelantada del estado interno privado (definido exclusivamente en src/core/Engine.cpp).
         struct Impl;
         std::unique_ptr<Impl> m_impl;
     };
