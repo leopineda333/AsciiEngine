@@ -90,6 +90,8 @@ namespace AsciiEngine {
         ZBufferStyle   zBufferStyle; // Opciones esteticas alternables en vivo (O, B, G, V).
         EffectLodState effectLod;    // Perfil dinamico de LOD de efectos segun zoom actual.
 
+        EngineSettings settings; // Opciones de configuración global del motor.
+
         // --- Buffers scratch pre-alojados: garantizan cero malloc/new durante Update() y Render() ---
         std::vector<uint32_t>   visibleInstanceIds;
         std::vector<ChunkCoord> activeChunks;
@@ -162,6 +164,7 @@ namespace AsciiEngine {
             effectLod.particleRenderStride = (camera.zoom < 1.08f) ? 2 : 1;
             effectLod.distantAtomStride = (camera.zoom < 1.12f) ? 2 : 1;
             effectLod.allowReflections = (camera.zoom >= 1.02f);
+            effectLod.allowReflections = settings.enableWaterReflections && (camera.zoom >= 1.02f);
         }
 
         /**
@@ -276,6 +279,7 @@ namespace AsciiEngine {
             uint32_t& atomsEvaluated, uint32_t& outFoliageDrawn) {
             const BiomeDef* biome = weatherSystem.GetActiveBiome();
             if (!biome || biome->groundFoliage.empty()) return;
+            if (settings.foliageDensityScale <= 0.001f) return;
 
             const Vec2 focusPos = GetFocusWorldPos();
             const FoliageDistributionConfig& distCfg = biome->foliageDistribution;
@@ -283,7 +287,7 @@ namespace AsciiEngine {
             const float invClumpStep = 1.0f / clumpStep;
             const float patchScale = distCfg.patchScale;
             const float patchSep = distCfg.patchSeparation;
-            const float densityScale = effectLod.densityScale * distCfg.globalDensity;
+            const float densityScale = effectLod.densityScale * distCfg.globalDensity * settings.foliageDensityScale;
 
             const float rLod = effectLod.foliageRadiusWorld;
             const float rLodSq = rLod * rLod;
@@ -367,7 +371,9 @@ namespace AsciiEngine {
                         float bladeH = chosen->heightZ * hVar;
 
                         // 6. Viento continuo + apartamiento fisico radial al caminar jugadores o NPCs encima.
-                        Vec2  bend = weatherSystem.SampleWindOffset(bx, by, 1.0f, chosen->windWeight * 1.55f);
+                        Vec2 bend = settings.enableWindSway
+                            ? weatherSystem.SampleWindOffset(bx, by, 1.0f, chosen->windWeight * 1.55f)
+                            : Vec2{ 0.0f, 0.0f };
                         float flattenZ = 1.0f;
 
                         if (chosen->interactive) {
@@ -682,6 +688,33 @@ namespace AsciiEngine {
                 }, isoConfig));
             DrawLineEx({ pStart.x, pStart.y }, { wEnd.x, wEnd.y }, 2.0f, MAGENTA);
         }
+
+        /**
+         * @brief Sincroniza EngineSettings hacia el Z-Buffer, LightingSystem y limite de FPS en vivo.
+         */
+        void SyncSettingsToSubsystems() {
+            cellWidthPx = settings.cellWidthPx;
+            cellHeightPx = settings.cellHeightPx;
+
+            zBufferStyle.enableOutlines = settings.enableOutlines;
+            zBufferStyle.enableAsciiBorder = settings.enableAsciiBorder;
+            zBufferStyle.enableSubPixelOffset = settings.enableSubPixelOffset;
+            zBufferStyle.pixelOutlinePx = settings.pixelOutlinePx;
+            zBufferStyle.enableCellBacking = settings.enableCellBacking;
+            zBufferStyle.backingDarken = settings.backingDarken;
+            zBufferStyle.backingAlpha = settings.backingAlpha;
+
+            lightingSystem.SetShadowsEnabled(settings.enableShadows);
+            lightingSystem.SetShadowRaySteps(settings.shadowRaySteps);
+            lightingSystem.SetPointLightsEnabled(settings.enablePointLights);
+            lightingSystem.SetGIStrengthScale(settings.giStrengthScale);
+            lightingSystem.SetAtmosphereInfluence(settings.atmosphericInfluence);
+
+            if (initialized) {
+                SetTargetFPS(settings.targetFps);
+                zBuffer.Resize(screenWidth, screenHeight, cellWidthPx, cellHeightPx);
+            }
+        }
     };
 
     // =========================================================================
@@ -709,6 +742,7 @@ namespace AsciiEngine {
             m_impl->camera.target = { 0.0f, 0.0f };
             m_impl->camera.zoom = 1.35f;
         }
+        m_impl->SyncSettingsToSubsystems();
         return m_impl->initialized;
     }
 
@@ -912,12 +946,12 @@ namespace AsciiEngine {
         }
 
         // Atajos visuales y de diagnostico globales (disponibles tanto en Juego como en Editor).
-        if (IsKeyPressed(KEY_H))  m_impl->lightingSystem.ToggleShadows();
+        if (IsKeyPressed(KEY_H)) { m_impl->settings.enableShadows = !m_impl->settings.enableShadows;                m_impl->SyncSettingsToSubsystems(); }
+        if (IsKeyPressed(KEY_O)) { m_impl->settings.enableOutlines = !m_impl->settings.enableOutlines;              m_impl->SyncSettingsToSubsystems(); }
+        if (IsKeyPressed(KEY_B)) { m_impl->settings.enableAsciiBorder = !m_impl->settings.enableAsciiBorder;        m_impl->SyncSettingsToSubsystems(); }
+        if (IsKeyPressed(KEY_G)) { m_impl->settings.enableSubPixelOffset = !m_impl->settings.enableSubPixelOffset;  m_impl->SyncSettingsToSubsystems(); }
+        if (IsKeyPressed(KEY_V)) { m_impl->settings.enableCellBacking = !m_impl->settings.enableCellBacking;        m_impl->SyncSettingsToSubsystems(); }
         if (IsKeyPressed(KEY_T))  m_impl->playerTorchOn = !m_impl->playerTorchOn;
-        if (IsKeyPressed(KEY_O))  m_impl->zBufferStyle.enableOutlines = !m_impl->zBufferStyle.enableOutlines;
-        if (IsKeyPressed(KEY_B))  m_impl->zBufferStyle.enableAsciiBorder = !m_impl->zBufferStyle.enableAsciiBorder;
-        if (IsKeyPressed(KEY_G))  m_impl->zBufferStyle.enableSubPixelOffset = !m_impl->zBufferStyle.enableSubPixelOffset;
-        if (IsKeyPressed(KEY_V))  m_impl->zBufferStyle.enableCellBacking = !m_impl->zBufferStyle.enableCellBacking;
         if (IsKeyPressed(KEY_F3)) m_impl->debugHUD.ToggleTelemetry();
         if (IsKeyPressed(KEY_F4)) m_impl->debugHUD.ToggleOverlays();
 
@@ -953,7 +987,7 @@ namespace AsciiEngine {
         m_impl->particleSystem.Update(
             dt, m_impl->weatherSystem.GetWind(), sun.isNight, focusPos,
             m_impl->weatherSystem.GetWeatherParticleId(),
-            m_impl->weatherSystem.GetWeatherParticleRate() * m_impl->effectLod.densityScale
+            m_impl->weatherSystem.GetWeatherParticleRate()* m_impl->effectLod.densityScale* m_impl->settings.particleDensityScale
         );
 
         auto simEnd = Clock::now();
@@ -1121,7 +1155,7 @@ namespace AsciiEngine {
                 };
 
                 // Onda de viento en follaje flexible + perturbacion de normal para brillo vivo en hojas.
-                if (inEffectRadius && a.windWeightByte > 0) {
+                if (m_impl->settings.enableWindSway && inEffectRadius && a.windWeightByte > 0) {
                     float windW = static_cast<float>(a.windWeightByte) * (1.0f / 255.0f);
                     float heightNorm = MathIso::Clamp(sz * invBoundH, 0.0f, 1.0f);
                     Vec2  sway = m_impl->weatherSystem.SampleWindOffset(worldPt.x, worldPt.y, heightNorm, windW);
@@ -1272,6 +1306,33 @@ namespace AsciiEngine {
             CloseWindow();
             m_impl->initialized = false;
         }
+    }
+
+    const EngineSettings& Context::GetSettings() const {
+        return m_impl->settings;
+    }
+
+    void Context::ApplySettings(const EngineSettings& settings) {
+        m_impl->settings = settings;
+        m_impl->SyncSettingsToSubsystems();
+    }
+
+    void Context::ApplyQualityPreset(QualityPreset preset) {
+        m_impl->settings = MakeQualityPreset(preset);
+        m_impl->SyncSettingsToSubsystems();
+    }
+
+    bool Context::LoadSettings(const std::string& jsonPath) {
+        EngineSettings loaded = m_impl->settings;
+        if (!LoadEngineSettings(jsonPath, loaded)) {
+            return false;
+        }
+        ApplySettings(loaded);
+        return true;
+    }
+
+    bool Context::SaveSettings(const std::string& jsonPath) const {
+        return SaveEngineSettings(jsonPath, m_impl->settings);
     }
 
 } // namespace AsciiEngine

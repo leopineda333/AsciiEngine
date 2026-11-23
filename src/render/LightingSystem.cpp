@@ -142,6 +142,11 @@ namespace AsciiEngine {
 
         m_sunState.isNight = (sinT < 0.0f);
 
+        // Moduladores climaticos atenuados por m_atmosphereInfluence [0 = luz neutra .. 1 = clima completo].
+        const float effSunMul = MathIso::Lerp(1.0f, m_weatherMod.sunMultiplier, m_atmosphereInfluence);
+        const float effAmbMul = MathIso::Lerp(1.0f, m_weatherMod.ambientMultiplier, m_atmosphereInfluence);
+        const float effBgBlend = m_weatherMod.bgTintBlend * m_atmosphereInfluence;
+
         // 3. Direccion, color e intensidad de la fuente direccional activa (Sol de dia, Luna de noche).
         //    Como sunWeight == moonWeight == 0 en sinT == 0, cambiar lightDir aqui es 100% imperceptible.
         if (sinT >= 0.0f) {
@@ -152,14 +157,14 @@ namespace AsciiEngine {
             const ColorRGBA sunHorizon = { 255, 162, 92, 255 };  // Ambar calido de amanecer/atardecer.
             const ColorRGBA sunNoon = { 255, 248, 236, 255 }; // Blanco solar natural al mediodia.
             m_sunState.lightColor = MathIso::LerpColor(sunHorizon, sunNoon, Smoothstep(0.05f, 0.45f, sinT));
-            m_sunState.lightIntensity = sunWeight * 0.92f * m_weatherMod.sunMultiplier;
+            m_sunState.lightIntensity = sunWeight * 0.92f * effSunMul;
         }
         else {
             float moonElev = MathIso::Clamp(-sinT, 0.26f, 1.0f);
             // La luna orbita en oposicion al sol (-cosT) proyectando luz fria azulada.
             m_sunState.lightDir = MathIso::Normalize({ -cosT, 0.35f, moonElev });
             m_sunState.lightColor = { 130, 168, 230, 255 };
-            m_sunState.lightIntensity = moonWeight * 0.34f * m_weatherMod.sunMultiplier;
+            m_sunState.lightIntensity = moonWeight * 0.34f * effSunMul;
         }
 
         // 4. Fondo continuo estilo consola/terminal oscura (maximo contraste para los glifos ASCII).
@@ -172,7 +177,7 @@ namespace AsciiEngine {
 
         // 5. Tinte atmosferico del clima (tormenta/ventisca) escalado continuamente con dayBlend
         //    para evitar saltos bruscos al cambiar de dia con lluvia activa.
-        if (m_weatherMod.bgTintBlend > 0.01f) {
+        if (effBgBlend > 0.01f) {
             float tintScale = MathIso::Lerp(0.32f, 1.0f, dayBlend);
             ColorRGBA scaledTint = {
                 ToByte(static_cast<float>(m_weatherMod.bgTint.r) * tintScale),
@@ -202,7 +207,7 @@ namespace AsciiEngine {
         m_sunState.backgroundColor = bg;
         m_sunState.skyAmbient = skyCol;
         m_sunState.groundAmbient = gndCol;
-        m_sunState.ambientStrength = m_giConfig.ambientStrength * MathIso::Lerp(0.42f, 0.72f, dayBlend) * m_weatherMod.ambientMultiplier;
+        m_sunState.ambientStrength = m_giConfig.ambientStrength * MathIso::Lerp(0.42f, 0.72f, dayBlend) * effAmbMul * m_giStrengthScale;
         m_sunState.shadowDarkness = MathIso::Lerp(0.55f, 0.25f, dayBlend);
     }
 
@@ -210,6 +215,7 @@ namespace AsciiEngine {
         const PointLight* dynamicTorch) {
         // Reutilizamos el buffer ya reservado: cero asignaciones en el bucle principal.
         m_activeLights.clear();
+        if (!m_pointLightsEnabled) return;
 
         auto pushLight = [&](const PointLight& src) {
             if (src.radius <= 0.1f || src.intensity <= 0.01f) return;
@@ -265,7 +271,7 @@ namespace AsciiEngine {
 
     float LightingSystem::SampleSunShadow(Vec3 worldPt) const {
         // Descarte rapido si las sombras estan apagadas, no hay Heightfield o es plena penumbra de horizonte.
-        if (!m_shadowsEnabled || m_heightfield.empty() || m_sunState.lightIntensity < 0.05f) {
+        if (!m_shadowsEnabled || m_shadowRaySteps <= 0 || m_heightfield.empty() || m_sunState.lightIntensity < 0.05f) {
             return 1.0f;
         }
 
@@ -289,7 +295,7 @@ namespace AsciiEngine {
         constexpr float kStartDist = 0.70f;
         constexpr float kSelfBias = 0.35f;
 
-        for (int s = 0; s < kMaxSteps; ++s) {
+        for (int s = 0; s < m_shadowRaySteps; ++s) {
             float dist = kStartDist + static_cast<float>(s) * kStepSize;
             float rayZ = worldPt.z + dist * dzPerUnit + kSelfBias;
 

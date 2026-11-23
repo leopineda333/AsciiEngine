@@ -23,6 +23,11 @@ int main() {
 
     // 3. Cargamos el escenario inicial (bosque con 580+ instancias Flyweight, lago, puente, luces y criaturas).
     engine.LoadMap("assets/data/maps/forest_demo.json");
+    // Carga ajustes de usuario si existen; si no, crea el archivo con el preset HIGH.
+    if (!engine.LoadSettings("user_settings.json")) {
+        engine.ApplyQualityPreset(AsciiEngine::QualityPreset::HIGH);
+        engine.SaveSettings("user_settings.json");
+    }
 
     // 4. Bucle principal del juego:
     //    - Update(dt): entrada, fisica, IA, animacion procedural, clima, ciclo Dia-Noche y particulas.

@@ -187,6 +187,12 @@ namespace AsciiEngine {
         void  SetCycleRunning(bool on) { m_dayNight.enabled = on; }
         void  SetShadowsEnabled(bool on) { m_shadowsEnabled = on; }
 
+        // Ajustes de calidad grafica sincronizados desde EngineSettings (v1.1.0).
+        void SetShadowRaySteps(int steps) { m_shadowRaySteps = (steps < 0) ? 0 : ((steps > 20) ? 20 : steps); }
+        void SetPointLightsEnabled(bool on) { m_pointLightsEnabled = on; }
+        void SetGIStrengthScale(float scale) { m_giStrengthScale = (scale < 0.0f) ? 0.0f : scale; RecomputeSunState(); }
+        void SetAtmosphereInfluence(float infl) { m_atmosphereInfluence = (infl < 0.0f) ? 0.0f : ((infl > 1.0f) ? 1.0f : infl); RecomputeSunState(); }
+
         bool  IsCycleRunning() const { return m_dayNight.enabled; }
         bool  AreShadowsEnabled() const { return m_shadowsEnabled; }
         float GetTimeHours() const { return m_dayNight.currentTimeHours; }
@@ -222,6 +228,11 @@ namespace AsciiEngine {
         SunState m_sunState;
         float    m_elapsedTime = 0.0f; // Reloj continuo para parpadeo de luces y animacion de olas.
         bool     m_shadowsEnabled = true;
+
+        int   m_shadowRaySteps = 14;
+        bool  m_pointLightsEnabled = true;
+        float m_giStrengthScale = 1.0f;
+        float m_atmosphereInfluence = 1.0f;
 
         // Mapa de alturas 2D plano (Heightfield) para raymarching de sombras 2.5D.
         float              m_hfOriginX = -140.0f;

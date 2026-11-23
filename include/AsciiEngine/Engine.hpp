@@ -15,6 +15,7 @@
 
 #include <memory> // std::unique_ptr para la propiedad exclusiva de Context::Impl.
 #include <string>
+#include <AsciiEngine/Settings.hpp>
 
 namespace AsciiEngine {
 
@@ -63,6 +64,31 @@ namespace AsciiEngine {
          * @brief Serializa el estado completo actual del escenario (instancias, luces, zonas, entidades, clima) a JSON.
          */
         bool SaveMap(const std::string& mapPath) const;
+
+        /**
+         * @brief Devuelve la configuracion grafica y de simulacion activa del motor.
+         */
+        const EngineSettings& GetSettings() const;
+
+        /**
+         * @brief Aplica en tiempo real una configuracion personalizada a todos los subsistemas.
+         */
+        void ApplySettings(const EngineSettings& settings);
+
+        /**
+         * @brief Aplica de golpe un perfil precalibrado (LOW, MEDIUM, HIGH o ULTRA).
+         */
+        void ApplyQualityPreset(QualityPreset preset);
+
+        /**
+         * @brief Carga ajustes de usuario desde un archivo JSON y los aplica de inmediato.
+         */
+        bool LoadSettings(const std::string& jsonPath);
+
+        /**
+         * @brief Guarda la configuracion actual del motor en un archivo JSON de usuario.
+         */
+        bool SaveSettings(const std::string& jsonPath) const;
 
         /**
          * @brief Alterna entre el Modo Juego y el Editor Visual de Mapas embebido (tecla [F1]).
