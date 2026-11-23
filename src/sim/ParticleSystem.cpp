@@ -146,7 +146,7 @@ namespace AsciiEngine {
 
     void ParticleSystem::AddWorldEmitter(Vec3 position, Vec3 areaHalfExtents,
         std::string_view templateId, float rateOverride,
-        bool nightOnly) {
+        bool nightOnly, float durationSec) {
         uint16_t idx = 0;
         if (!FindTemplateIndex(templateId, idx)) return;
 
@@ -155,8 +155,31 @@ namespace AsciiEngine {
         em.areaHalfExtents = areaHalfExtents;
         em.templateIdx = idx;
         em.spawnRate = (rateOverride > 0.0f) ? rateOverride : m_templates[idx].spawnRate;
+        em.remainingLife = durationSec;
         em.nightOnly = nightOnly;
         m_worldEmitters.push_back(em);
+    }
+
+    void ParticleSystem::SpawnBurst(std::string_view templateId, Vec3 position, uint32_t count,
+        Vec3 areaHalfExtents) {
+        uint16_t idx = 0;
+        if (count == 0 || !FindTemplateIndex(templateId, idx)) return;
+
+        auto randSym = [&](float half) -> float {
+            if (half <= 0.0001f) return 0.0f;
+            std::uniform_real_distribution<float> d(-half, half);
+            return d(m_rng);
+            };
+
+        // Insercion directa en O(count) respetando el techo fijo MAX_PARTICLES del pool SoA.
+        for (uint32_t s = 0; s < count && m_activeCount < MAX_PARTICLES; ++s) {
+            Vec3 p = {
+                position.x + randSym(areaHalfExtents.x),
+                position.y + randSym(areaHalfExtents.y),
+                position.z + randSym(areaHalfExtents.z)
+            };
+            SpawnOne(idx, p);
+        }
     }
 
     void ParticleSystem::SpawnOne(uint16_t templateIdx, Vec3 pos) {
@@ -194,23 +217,35 @@ namespace AsciiEngine {
             return d(m_rng);
             };
 
-        // 1. Emisores fijos del escenario (ej. chispas sobre braseros/antorchas).
-        for (WorldParticleEmitter& em : m_worldEmitters) {
-            if (em.nightOnly && !isNight) continue;
+        // 1. Emisores fijos y temporales (con borrado O(1) swap-with-last cuando expira remainingLife).
+        size_t e = 0;
+        while (e < m_worldEmitters.size()) {
+            WorldParticleEmitter& em = m_worldEmitters[e];
 
-            // Acumulador fraccionario: asegura la misma tasa de emision a 30, 60 o 144 FPS.
-            em.accumulator += em.spawnRate * safeDt;
-            int toSpawn = static_cast<int>(em.accumulator);
-            em.accumulator -= static_cast<float>(toSpawn);
-
-            for (int s = 0; s < toSpawn && m_activeCount < MAX_PARTICLES; ++s) {
-                Vec3 p = {
-                    em.position.x + randSym(em.areaHalfExtents.x),
-                    em.position.y + randSym(em.areaHalfExtents.y),
-                    em.position.z + randSym(em.areaHalfExtents.z)
-                };
-                SpawnOne(em.templateIdx, p);
+            if (em.remainingLife > 0.0f) {
+                em.remainingLife -= safeDt;
+                if (em.remainingLife <= 0.0f) {
+                    m_worldEmitters[e] = m_worldEmitters.back();
+                    m_worldEmitters.pop_back();
+                    continue; // Reevaluamos el elemento recien movido en la posicion 'e'.
+                }
             }
+
+            if (!em.nightOnly || isNight) {
+                em.accumulator += em.spawnRate * safeDt;
+                int toSpawn = static_cast<int>(em.accumulator);
+                em.accumulator -= static_cast<float>(toSpawn);
+
+                for (int s = 0; s < toSpawn && m_activeCount < MAX_PARTICLES; ++s) {
+                    Vec3 p = {
+                        em.position.x + randSym(em.areaHalfExtents.x),
+                        em.position.y + randSym(em.areaHalfExtents.y),
+                        em.position.z + randSym(em.areaHalfExtents.z)
+                    };
+                    SpawnOne(em.templateIdx, p);
+                }
+            }
+            ++e;
         }
 
         // 2. Emisor climatico volumetrico centrado alrededor del foco de camara (lluvia / ventisca).

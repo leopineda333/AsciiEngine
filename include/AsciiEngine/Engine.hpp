@@ -16,6 +16,7 @@
 #include <memory> // std::unique_ptr para la propiedad exclusiva de Context::Impl.
 #include <string>
 #include <AsciiEngine/Settings.hpp>
+#include <AsciiEngine/Types.hpp>
 
 namespace AsciiEngine {
 
@@ -101,6 +102,24 @@ namespace AsciiEngine {
         void ToggleDebugHUD();
 
         /**
+         * @brief Dispara una rafaga instantanea de particulas efimeras (pisadas, impactos, explosiones).
+         */
+        void SpawnParticleBurst(const std::string& templateId, Vec3 worldPos, uint32_t count,
+            Vec3 areaHalfExtents = { 0.25f, 0.25f, 0.10f });
+
+        /**
+         * @brief Crea un emisor temporal que emite particulas durante 'durationSec' y luego se elimina solo.
+         */
+        void AddTimedParticleEmitter(const std::string& templateId, Vec3 worldPos, Vec3 areaHalfExtents,
+            float spawnRate, float durationSec);
+
+        /**
+         * @brief Crea una luz puntual temporal con fade-out (destellos de golpe, magia o explosiones).
+         */
+        void AddTemporaryLight(Vec3 worldPos, ColorRGBA color, float intensity, float radius,
+            float durationSec, bool fadeOut = true);
+
+        /**
          * @brief Indica si el motor sigue activo (inicializado y sin solicitud de cierre de ventana).
          */
         bool IsRunning() const;
@@ -124,6 +143,8 @@ namespace AsciiEngine {
          * @brief Libera la fuente en VRAM y cierra la ventana grafica de forma idempotente (seguro llamarlo varias veces).
          */
         void Shutdown();
+
+        
 
     private:
         // Declaracion adelantada del estado interno privado (definido exclusivamente en src/core/Engine.cpp).

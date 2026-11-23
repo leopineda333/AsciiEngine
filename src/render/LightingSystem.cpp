@@ -45,9 +45,32 @@ namespace AsciiEngine {
         m_giConfig = gi;
         m_mapLights = mapLights;
 
-        // Pre-reservamos la lista de luces activas (+4 margen para antorcha dinamica u otras luces moviles).
-        m_activeLights.reserve(m_mapLights.size() + 4);
+        m_tempLights.clear();
+        m_tempLights.reserve(32);
+
+        // Pre-reservamos la lista de luces activas.
+        m_activeLights.reserve(m_mapLights.size() + 36);
         RecomputeSunState();
+    }
+
+    void LightingSystem::AddTemporaryLight(Vec3 pos, ColorRGBA color, float intensity, float radius,
+        float durationSec, bool fadeOut) {
+        if (durationSec <= 0.01f || radius <= 0.1f || intensity <= 0.01f) return;
+        // Tope suave de 32 luces efimeras simultaneas para proteger el presupuesto de frame.
+        if (m_tempLights.size() >= 32) {
+            m_tempLights.erase(m_tempLights.begin());
+        }
+
+        TemporaryLight tl;
+        tl.light.position = pos;
+        tl.light.color = color;
+        tl.light.intensity = intensity;
+        tl.light.radius = radius;
+        tl.light.flicker = false;
+        tl.remainingLife = durationSec;
+        tl.maxLife = durationSec;
+        tl.fadeOut = fadeOut;
+        m_tempLights.push_back(tl);
     }
 
     void LightingSystem::BuildShadowHeightfield(const World& world, const MaterialSystem& materials, float cellSizeWorld) {
@@ -118,6 +141,18 @@ namespace AsciiEngine {
         if (m_dayNight.enabled && m_dayNight.dayLengthSeconds > 1.0f) {
             float hoursPerSec = 24.0f / m_dayNight.dayLengthSeconds;
             m_dayNight.currentTimeHours = std::fmod(m_dayNight.currentTimeHours + hoursPerSec * dt, 24.0f);
+        }
+
+        size_t i = 0;
+        while (i < m_tempLights.size()) {
+            m_tempLights[i].remainingLife -= dt;
+            if (m_tempLights[i].remainingLife <= 0.0f) {
+                m_tempLights[i] = m_tempLights.back();
+                m_tempLights.pop_back();
+            }
+            else {
+                ++i;
+            }
         }
 
         RecomputeSunState();
@@ -258,6 +293,22 @@ namespace AsciiEngine {
         if (dynamicTorch) {
             pushLight(*dynamicTorch);
         }
+
+        // 3. Luces puntuales temporales (impactos, explosiones, hechizos) con fade-out opcional.
+        for (const TemporaryLight& tl : m_tempLights) {
+            const PointLight& src = tl.light;
+            if (src.position.x + src.radius < minWX || src.position.x - src.radius > maxWX ||
+                src.position.y + src.radius < minWY || src.position.y - src.radius > maxWY) {
+                continue;
+            }
+            PointLight faded = src;
+            if (tl.fadeOut && tl.maxLife > 0.001f) {
+                float lifeFrac = MathIso::Clamp(tl.remainingLife / tl.maxLife, 0.0f, 1.0f);
+                faded.intensity = src.intensity * lifeFrac;
+                faded.radius = src.radius * (0.45f + 0.55f * lifeFrac);
+            }
+            pushLight(faded);
+        }
     }
 
     float LightingSystem::SampleHeightAt(float worldX, float worldY) const {
@@ -315,20 +366,51 @@ namespace AsciiEngine {
     ShadedAtom LightingSystem::ShadeAtom(Vec3 worldPt, Vec3 normal, float ao,
         const MaterialSystem& materials, MaterialId matId,
         bool receiveShadows, char structuralOverride) const {
-        // 1. Iluminacion directa Lambertiana (max(0, Dot(N, L))) modulada por sombras 2.5D.
-        //    Optimizacion: solo trazamos el rayo de sombra si la cara realmente mira hacia la luz (ndotl > 0.06).
+        const Material& mat = materials.Get(matId);
+
+        // Vector unitario hacia la camara isometrica 2:1: Normalize({ 1.0, 1.0, 1.25 }).
+        static constexpr Vec3 kViewDir = { 0.529813f, 0.529813f, 0.662266f };
+
+        // Fuerza especular derivada de reflectivity y roughness definidos en materials.json.
+        // Materiales mate (reflectivity == 0, ej. corteza/pasto) saltan todo el bloque especular.
+        const float specWeight = mat.reflectivity * (1.0f - mat.roughness * 0.65f);
+        const bool  wantsSpec = (specWeight > 0.02f);
+
+        auto fastSpecLobe = [](float ndoth, float roughness) -> float {
+            float s2 = ndoth * ndoth;
+            float s4 = s2 * s2;
+            float s8 = s4 * s4;
+            // Rugosidad baja (<0.35, metal/cristal) -> brillo fino (pow 16); media -> pow 8; alta -> pow 4.
+            return (roughness < 0.35f) ? (s8 * s8) : ((roughness < 0.65f) ? s8 : s4);
+            };
+
+        // 1. Iluminacion directa Lambertiana + especular solar/lunar (Blinn-Phong).
         float ndotl = std::max(0.0f, MathIso::Dot(normal, m_sunState.lightDir));
         float shadowFactor = (receiveShadows && ndotl > 0.06f) ? SampleSunShadow(worldPt) : 1.0f;
         float sunContrib = ndotl * m_sunState.lightIntensity * shadowFactor;
 
-        // Acumulador de energia luminica en espacio RGB normalizado [0..1+].
-        float lightR = sunContrib * (static_cast<float>(m_sunState.lightColor.r) / 255.0f);
-        float lightG = sunContrib * (static_cast<float>(m_sunState.lightColor.g) / 255.0f);
-        float lightB = sunContrib * (static_cast<float>(m_sunState.lightColor.b) / 255.0f);
+        float sunR = static_cast<float>(m_sunState.lightColor.r) / 255.0f;
+        float sunG = static_cast<float>(m_sunState.lightColor.g) / 255.0f;
+        float sunB = static_cast<float>(m_sunState.lightColor.b) / 255.0f;
+        float lightR = sunContrib * sunR;
+        float lightG = sunContrib * sunG;
+        float lightB = sunContrib * sunB;
 
-        // 2. Iluminacion Global Hemisferica (GI):
-        //    Mapeamos normal.z de [-1..+1] a [0..1] (upFactor) para mezclar rebote del suelo con cielo.
-        //    El factor (0.45 + 0.85 * upFactor) mantiene volumen 3D legible incluso bajo lluvia o crepusculo.
+        float specR = 0.0f, specG = 0.0f, specB = 0.0f;
+        if (wantsSpec && ndotl > 0.05f && shadowFactor > 0.5f) {
+            Vec3 halfVec = MathIso::Normalize({
+                m_sunState.lightDir.x + kViewDir.x,
+                m_sunState.lightDir.y + kViewDir.y,
+                m_sunState.lightDir.z + kViewDir.z
+                });
+            float ndoth = std::max(0.0f, MathIso::Dot(normal, halfVec));
+            float sAmt = fastSpecLobe(ndoth, mat.roughness) * specWeight * m_sunState.lightIntensity;
+            specR += sunR * sAmt;
+            specG += sunG * sAmt;
+            specB += sunB * sAmt;
+        }
+
+        // 2. Iluminacion Global Hemisferica (GI).
         float upFactor = (normal.z * 0.5f) + 0.5f;
         ColorRGBA hemisCol = MathIso::LerpColor(m_sunState.groundAmbient, m_sunState.skyAmbient, upFactor);
         float ambEnergy = m_sunState.ambientStrength * (0.45f + 0.85f * upFactor) * ao;
@@ -337,50 +419,57 @@ namespace AsciiEngine {
         lightG += (static_cast<float>(hemisCol.g) / 255.0f) * ambEnergy;
         lightB += (static_cast<float>(hemisCol.b) / 255.0f) * ambEnergy;
 
-        // 3. Acumulacion de luces puntuales activas en el frustum (estaticas + antorcha del jugador).
+        // 3. Luces puntuales activas (difusa + reflejo especular sobre superficies metalicas/pulidas).
         float pointEnergy = 0.0f;
         for (const ActiveFrameLight& pl : m_activeLights) {
             float dx = pl.position.x - worldPt.x;
             float dy = pl.position.y - worldPt.y;
             float dz = pl.position.z - worldPt.z;
             float distSq = dx * dx + dy * dy + dz * dz;
-
-            // Descarte rapido sin raiz cuadrada si el atomo esta fuera del radio de la luz.
             if (distSq >= pl.radiusSq) continue;
 
             float dist = std::sqrt(distSq);
             float invDist = 1.0f / (dist + 0.0001f);
-            // Wrap Lambert minimo de 0.20f para que las antorchas iluminen suavemente bordes laterales.
-            float pNdotL = std::max(0.20f, (normal.x * dx + normal.y * dy + normal.z * dz) * invDist);
-            // Atenuacion cuadratica suave: (1 - d / R)^2 vale 1 en el centro y cae a 0 con derivada 0 en R.
+            float lx = dx * invDist;
+            float ly = dy * invDist;
+            float lz = dz * invDist;
+
+            float pNdotL = std::max(0.20f, normal.x * lx + normal.y * ly + normal.z * lz);
             float falloff = 1.0f - (dist * pl.invRadius);
-            float atten = falloff * falloff * pNdotL;
+            float fSq = falloff * falloff;
+            float atten = fSq * pNdotL;
 
             lightR += pl.rNorm * atten;
             lightG += pl.gNorm * atten;
             lightB += pl.bNorm * atten;
             pointEnergy += pl.intensity * atten;
+
+            if (wantsSpec) {
+                Vec3 halfVec = MathIso::Normalize({ lx + kViewDir.x, ly + kViewDir.y, lz + kViewDir.z });
+                float ndoth = std::max(0.0f, MathIso::Dot(normal, halfVec));
+                float pSpec = fastSpecLobe(ndoth, mat.roughness) * specWeight * fSq;
+                specR += pl.rNorm * pSpec;
+                specG += pl.gNorm * pSpec;
+                specB += pl.bNorm * pSpec;
+            }
         }
 
-        // 4. Luminancia escalar con curva de contraste centrada en 0.45 (pendiente 1.32x):
-        //    Separa claramente las 3 paradas del material (dark -> normal -> lit) y evita tonos lavados.
-        float relief = (upFactor * 0.24f + sunContrib * 0.85f + pointEnergy * 0.90f + ambEnergy * 0.65f) * ao;
+        // 4. Luminancia escalar (incluye impulso especular para escalar hacia glifos brillantes '#', '@').
+        float specLuma = std::max({ specR, specG, specB });
+        float relief = (upFactor * 0.24f + sunContrib * 0.85f + pointEnergy * 0.90f + ambEnergy * 0.65f) * ao
+            + specLuma * 0.55f;
         float luma = MathIso::Clamp((relief - 0.45f) * 1.32f + 0.45f, 0.0f, 1.0f);
 
         char glyph = (structuralOverride != '\0') ? structuralOverride : materials.SampleGlyph(matId, luma);
         ColorRGBA baseCol = materials.SampleColor(matId, luma);
 
-        // 5. Acumulacion de nieve blanca sobre caras que miran hacia el cielo (normal.z > 0.52).
+        // 5. Nieve acumulada sobre caras superiores.
         if (m_weatherMod.snowCoverage > 0.05f && normal.z > 0.52f) {
             float snowBlend = m_weatherMod.snowCoverage * MathIso::Clamp((normal.z - 0.52f) / 0.35f, 0.0f, 1.0f);
             baseCol = MathIso::LerpColor(baseCol, { 232, 240, 250, 255 }, snowBlend * 0.85f);
         }
 
-        // 6. Separacion de Cromaticidad y Exposicion:
-        //    Como baseCol ya fue oscurecido por SampleColor(luma), multiplicar directamente por lightRGB
-        //    aplicaria un "doble oscurecimiento" que volveria grises los objetos en tormenta o crepusculo.
-        //    Normalizando por maxLight extraemos el tinte cromatico puro de la luz (55% de influencia)
-        //    y acotamos la exposicion a [0.56 .. 1.14] para preservar la identidad del material.
+        // 6. Cromaticidad + exposicion + destello especular aditivo.
         float maxLight = std::max({ lightR, lightG, lightB, 0.001f });
         float chromaR = MathIso::Lerp(1.0f, lightR / maxLight, 0.55f);
         float chromaG = MathIso::Lerp(1.0f, lightG / maxLight, 0.55f);
@@ -390,9 +479,9 @@ namespace AsciiEngine {
         return {
             glyph,
             {
-                ToByte(static_cast<float>(baseCol.r) * chromaR * exposure),
-                ToByte(static_cast<float>(baseCol.g) * chromaG * exposure),
-                ToByte(static_cast<float>(baseCol.b) * chromaB * exposure),
+                ToByte(static_cast<float>(baseCol.r) * chromaR * exposure + specR * 135.0f),
+                ToByte(static_cast<float>(baseCol.g) * chromaG * exposure + specG * 135.0f),
+                ToByte(static_cast<float>(baseCol.b) * chromaB * exposure + specB * 135.0f),
                 255
             }
         };

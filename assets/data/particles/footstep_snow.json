@@ -1,0 +1,26 @@
+{
+  "id": "footstep_snow",
+  "spawnRate": 0.0,
+  "lifetime": {
+    "min": 0.26,
+    "max": 0.50
+  },
+  "velocity": {
+    "min": {
+      "x": -1.6,
+      "y": -1.6,
+      "z": 0.9
+    },
+    "max": {
+      "x": 1.6,
+      "y": 1.6,
+      "z": 2.0
+    }
+  },
+  "gravityZ": -4.2,
+  "windInfluence": 0.45,
+  "collideWithFloor": false,
+  "spawnHighVolume": false,
+  "asciiOverLife": [ "*", "+", "." ],
+  "colorOverLife": [ "#F0F6FC", "#C2D4E8", "#8BA2BC" ]
+}

@@ -850,6 +850,27 @@ namespace AsciiEngine {
         m_impl->debugHUD.ToggleTelemetry();
     }
 
+    void Context::SpawnParticleBurst(const std::string& templateId, Vec3 worldPos, uint32_t count,
+        Vec3 areaHalfExtents) {
+        if (m_impl->settings.particleDensityScale <= 0.01f) return;
+        uint32_t scaledCount = std::max(1u, static_cast<uint32_t>(std::round(static_cast<float>(count) * m_impl->settings.particleDensityScale)));
+        m_impl->particleSystem.SpawnBurst(templateId, worldPos, scaledCount, areaHalfExtents);
+    }
+
+    void Context::AddTimedParticleEmitter(const std::string& templateId, Vec3 worldPos, Vec3 areaHalfExtents,
+        float spawnRate, float durationSec) {
+        if (m_impl->settings.particleDensityScale <= 0.01f || durationSec <= 0.0f) return;
+        m_impl->particleSystem.AddWorldEmitter(
+            worldPos, areaHalfExtents, templateId,
+            spawnRate * m_impl->settings.particleDensityScale, false, durationSec
+        );
+    }
+
+    void Context::AddTemporaryLight(Vec3 worldPos, ColorRGBA color, float intensity, float radius,
+        float durationSec, bool fadeOut) {
+        m_impl->lightingSystem.AddTemporaryLight(worldPos, color, intensity, radius, durationSec, fadeOut);
+    }
+
     bool Context::IsRunning() const {
         return m_impl->initialized && !WindowShouldClose();
     }
@@ -915,7 +936,15 @@ namespace AsciiEngine {
             if (IsKeyDown(KEY_D)) screenInput.x += 1.0f;
 
             if (IsKeyPressed(KEY_TAB)) m_impl->characterSystem.CycleControlledCharacter();
-            if (IsKeyPressed(KEY_E))   m_impl->characterSystem.TriggerPlayerAttack();
+            if (IsKeyPressed(KEY_E)) {
+                m_impl->characterSystem.TriggerPlayerAttack();
+                if (const CharacterInstance* ch = m_impl->characterSystem.GetControlledCharacter()) {
+                    float fx = ch->actor.position.x + std::cos(ch->actor.facingAngleRad) * 1.15f;
+                    float fy = ch->actor.position.y + std::sin(ch->actor.facingAngleRad) * 1.15f;
+                    SpawnParticleBurst("impact_burst", { fx, fy, 1.15f }, 16, { 0.25f, 0.25f, 0.20f });
+                    AddTemporaryLight({ fx, fy, 1.45f }, { 255, 200, 115, 255 }, 2.2f, 9.5f, 0.34f, true);
+                }
+            }
 
             desiredWorldDir = MathIso::IsoToWorldGround(screenInput, m_impl->isoConfig);
             playerSprint = IsKeyDown(KEY_LEFT_SHIFT);
@@ -960,10 +989,12 @@ namespace AsciiEngine {
         // =========================================================================
         // La nieve acumulada reduce la friccion del terreno de 10.0 a 4.5 (deslizamiento invernal).
         float groundFriction = MathIso::Lerp(10.0f, 4.5f, m_impl->weatherSystem.GetModifiers().snowCoverage);
+        ParticleSystem* footstepSys = (m_impl->settings.particleDensityScale > 0.01f) ? &m_impl->particleSystem : nullptr;
         m_impl->characterSystem.Update(
             dt, desiredWorldDir, playerSprint, groundFriction,
             m_impl->world, m_impl->spatialGrid,
-            m_impl->physicsQueryIds, m_impl->physicsQueryChunks
+            m_impl->physicsQueryIds, m_impl->physicsQueryChunks,
+            footstepSys, m_impl->weatherSystem.GetModifiers().snowCoverage
         );
 
         // Seguimiento suave de camara solo en Modo Juego; en Editor la camara es 100% libre.

@@ -1,0 +1,26 @@
+{
+  "id": "footstep_dust",
+  "spawnRate": 0.0,
+  "lifetime": {
+    "min": 0.22,
+    "max": 0.42
+  },
+  "velocity": {
+    "min": {
+      "x": -1.4,
+      "y": -1.4,
+      "z": 0.6
+    },
+    "max": {
+      "x": 1.4,
+      "y": 1.4,
+      "z": 1.6
+    }
+  },
+  "gravityZ": -3.2,
+  "windInfluence": 0.35,
+  "collideWithFloor": false,
+  "spawnHighVolume": false,
+  "asciiOverLife": [ "o", ".", "," ],
+  "colorOverLife": [ "#A89882", "#756858", "#4A433B" ]
+}

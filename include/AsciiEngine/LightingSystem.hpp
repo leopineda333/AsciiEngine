@@ -101,6 +101,16 @@ namespace AsciiEngine {
         float intensity; // Intensidad escalar efectiva del frame.
     };
 
+    /**
+     * @brief Luz puntual efimera con tiempo de vida finito (explosiones, impactos, hechizos).
+     */
+    struct TemporaryLight {
+        PointLight light;
+        float      remainingLife = 0.0f;
+        float      maxLife = 1.0f;
+        bool       fadeOut = true; // true = atenuacion lineal de intensidad y radio al agotarse.
+    };
+
     class LightingSystem {
     public:
         /**
@@ -131,6 +141,14 @@ namespace AsciiEngine {
          */
         void PrepareFrameLights(float minWX, float maxWX, float minWY, float maxWY,
             const PointLight* dynamicTorch = nullptr);
+
+        /**
+         * @brief Anade una luz puntual temporal que se atenua y elimina sola en O(1) al vencer durationSec.
+         */
+        void AddTemporaryLight(Vec3 pos, ColorRGBA color, float intensity, float radius,
+            float durationSec, bool fadeOut = true);
+
+        void ClearTemporaryLights() { m_tempLights.clear(); }
 
         /**
          * @brief Traza un rayo 2D en direccion al Sol/Luna sobre el Heightfield para detectar oclusion.
@@ -217,10 +235,11 @@ namespace AsciiEngine {
          */
         float SampleHeightAt(float worldX, float worldY) const;
 
-        DayNightConfig           m_dayNight;
-        GlobalIlluminationConfig m_giConfig;
-        std::vector<PointLight>  m_mapLights;
-        WeatherModifiers         m_weatherMod;
+        DayNightConfig              m_dayNight;
+        GlobalIlluminationConfig    m_giConfig;
+        std::vector<PointLight>     m_mapLights;
+        std::vector<TemporaryLight> m_tempLights;
+        WeatherModifiers            m_weatherMod;
 
         // Lista pre-reservada de luces visibles en el frame actual (cero asignaciones en Render).
         std::vector<ActiveFrameLight> m_activeLights;

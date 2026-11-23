@@ -31,6 +31,7 @@ namespace AsciiEngine {
     // Declaraciones adelantadas para evitar dependencias circulares y mantener los headers ligeros.
     class MaterialSystem;
     class LightingSystem;
+    class ParticleSystem;
     class AsciiZBuffer;
     class SpatialHashGrid;
     struct ChunkCoord;
@@ -112,6 +113,7 @@ namespace AsciiEngine {
         AnimState           animState = AnimState::IDLE; // Estado actual de la maquina de animacion.
         float               animTime = 0.0f;            // Reloj interno de fase (avanza mas rapido en RUN).
         float               attackTimer = 0.0f;            // Tiempo restante en estado ATTACK (> 0 bloquea cambio).
+        float               stepTimer = 0.0f;
         float               scale = 1.0f;            // Factor de escala uniforme de la instancia.
         bool                isPlayer = false;           // true = recibe entrada WASD/Shift/E del usuario.
 
@@ -171,7 +173,8 @@ namespace AsciiEngine {
          */
         void Update(float dt, Vec2 playerDesiredWorldDir, bool playerSprint, float groundFriction,
             const World& world, SpatialHashGrid& spatialGrid,
-            std::vector<uint32_t>& scratchIds, std::vector<ChunkCoord>& scratchChunks);
+            std::vector<uint32_t>& scratchIds, std::vector<ChunkCoord>& scratchChunks,
+            ParticleSystem* particles = nullptr, float snowCoverage = 0.0f);
 
         /**
          * @brief Evalua cinematica directa 3D, ilumina y envia al Z-Buffer todos los personajes visibles
