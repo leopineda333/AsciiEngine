@@ -1,0 +1,26 @@
+{
+  "id": "footstep_splash",
+  "spawnRate": 0.0,
+  "lifetime": {
+    "min": 0.24,
+    "max": 0.45
+  },
+  "velocity": {
+    "min": {
+      "x": -1.9,
+      "y": -1.9,
+      "z": 1.6
+    },
+    "max": {
+      "x": 1.9,
+      "y": 1.9,
+      "z": 3.0
+    }
+  },
+  "gravityZ": -7.8,
+  "windInfluence": 0.20,
+  "collideWithFloor": true,
+  "spawnHighVolume": false,
+  "asciiOverLife": [ "o", "~", "." ],
+  "colorOverLife": [ "#D6F2FF", "#7AC8EB", "#3A7FA3" ]
+}

@@ -57,6 +57,7 @@ namespace AsciiEngine {
         uint16_t templateIdx = 0;     // Indice directo a ParticleSystem::m_templates.
         float    spawnRate = 10.0f; // Particulas por segundo.
         float    accumulator = 0.0f;  // Residuo fraccionario entre frames (independiente de los FPS).
+        float    remainingLife = -1.0f; // < 0 = permanente; > 0 = se autodestruye al llegar a 0 (ttl).
         bool     nightOnly = false; // true: solo emite durante el periodo nocturno.
     };
 
@@ -86,7 +87,15 @@ namespace AsciiEngine {
         void AddWorldEmitter(Vec3 position, Vec3 areaHalfExtents,
             std::string_view templateId,
             float rateOverride = 0.0f,
-            bool nightOnly = false);
+            bool nightOnly = false,
+            float durationSec = -1.0f);
+
+        /**
+         * @brief Dispara de golpe una rafaga de 'count' particulas efimeras en el pool SoA en O(count).
+         * @details Ideal para pisadas, impactos, explosiones o chispas de combate con cero asignaciones.
+         */
+        void SpawnBurst(std::string_view templateId, Vec3 position, uint32_t count,
+            Vec3 areaHalfExtents = { 0.25f, 0.25f, 0.10f });
 
         /**
          * @brief Emite nuevas particulas (emisores fijos, clima y luciernagas) e integra fisica SoA.

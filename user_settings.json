@@ -1,0 +1,29 @@
+{
+  "display": {
+    "cellHeightPx": 9.5,
+    "cellWidthPx": 5.5,
+    "targetFps": 60
+  },
+  "effects": {
+    "enableWaterReflections": true,
+    "enableWindSway": true,
+    "foliageDensityScale": 1.0,
+    "particleDensityScale": 1.0
+  },
+  "lighting": {
+    "atmosphericInfluence": 1.0,
+    "enablePointLights": true,
+    "enableShadows": true,
+    "giStrengthScale": 1.0,
+    "shadowRaySteps": 14
+  },
+  "style": {
+    "backingAlpha": 210,
+    "backingDarken": 0.41999998688697815,
+    "enableAsciiBorder": false,
+    "enableCellBacking": false,
+    "enableOutlines": true,
+    "enableSubPixelOffset": true,
+    "pixelOutlinePx": 1.0
+  }
+}

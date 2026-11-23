@@ -1,0 +1,26 @@
+{
+  "id": "impact_burst",
+  "spawnRate": 0.0,
+  "lifetime": {
+    "min": 0.18,
+    "max": 0.48
+  },
+  "velocity": {
+    "min": {
+      "x": -4.2,
+      "y": -4.2,
+      "z": 1.2
+    },
+    "max": {
+      "x": 4.2,
+      "y": 4.2,
+      "z": 4.4
+    }
+  },
+  "gravityZ": -8.5,
+  "windInfluence": 0.25,
+  "collideWithFloor": true,
+  "spawnHighVolume": false,
+  "asciiOverLife": [ "*", "+", ":", "." ],
+  "colorOverLife": [ "#FFF4C2", "#FFAE42", "#E85D2A", "#6E2214" ]
+}

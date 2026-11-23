@@ -140,16 +140,22 @@ namespace AsciiEngine::CollisionSolver {
         // si el sistema operativo pausa el hilo al arrastrar o redimensionar la ventana.
         float safeDt = std::min(dt, 0.05f);
 
-        // 1. Integracion de Euler semi-implicito: aceleracion por entrada + orientacion suave.
+        // 1. Integracion de Euler semi-implicito con soporte de acelerador analogico (throttle en (0..1]).
         float inputLenSq = desiredWorldDir.x * desiredWorldDir.x + desiredWorldDir.y * desiredWorldDir.y;
+        float maxSpeed = actor.moveSpeed;
+
         if (inputLenSq > 1e-5f) {
-            // Normalizamos la direccion deseada para que caminar en diagonal no sea sqrt(2) veces mas rapido.
-            float invLen = 1.0f / std::sqrt(inputLenSq);
+            float inputLen = std::sqrt(inputLenSq);
+            float invLen = 1.0f / inputLen;
             float dirX = desiredWorldDir.x * invLen;
             float dirY = desiredWorldDir.y * invLen;
 
-            actor.velocity.x += dirX * actor.acceleration * safeDt;
-            actor.velocity.y += dirY * actor.acceleration * safeDt;
+            // Si la magnitud viene de un stick inclinado parcialmente (< 1.0), escalamos la velocidad tope.
+            float throttle = std::min(1.0f, inputLen);
+            maxSpeed = actor.moveSpeed * throttle;
+
+            actor.velocity.x += dirX * actor.acceleration * throttle * safeDt;
+            actor.velocity.y += dirY * actor.acceleration * throttle * safeDt;
 
             // Interpolacion angular por el camino mas corto [-PI, +PI] hacia la direccion de marcha.
             float targetAngle = std::atan2(dirY, dirX);
@@ -165,10 +171,10 @@ namespace AsciiEngine::CollisionSolver {
             actor.velocity.y *= damping;
         }
 
-        // Acotamos la magnitud de velocidad al maximo permitido (walkSpeed o runSpeed).
+        // Acotamos la magnitud de velocidad al maximo proporcional actual.
         float speedSq = actor.velocity.x * actor.velocity.x + actor.velocity.y * actor.velocity.y;
-        if (speedSq > actor.moveSpeed * actor.moveSpeed) {
-            float invSpeed = actor.moveSpeed / std::sqrt(speedSq);
+        if (speedSq > maxSpeed * maxSpeed) {
+            float invSpeed = maxSpeed / std::sqrt(speedSq);
             actor.velocity.x *= invSpeed;
             actor.velocity.y *= invSpeed;
         }

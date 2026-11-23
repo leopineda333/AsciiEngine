@@ -10,6 +10,7 @@
 #include <AsciiEngine/LightingSystem.hpp>
 #include <AsciiEngine/AsciiZBuffer.hpp>
 #include <AsciiEngine/CullingSystem.hpp>
+#include <AsciiEngine/ParticleSystem.hpp>
 #include "json.hpp" // Dependencia privada: nunca se expone en headers publicos.
 #include "raylib.h" // Solo para TraceLog() en diagnosticos de carga.
 
@@ -483,7 +484,7 @@ namespace AsciiEngine {
 
     void CharacterSystem::Update(float dt, Vec2 playerDesiredWorldDir, bool playerSprint, float groundFriction,
         const World& world, SpatialHashGrid& spatialGrid,
-        std::vector<uint32_t>& scratchIds, std::vector<ChunkCoord>& scratchChunks) {
+        std::vector<uint32_t>& scratchIds, std::vector<ChunkCoord>& scratchChunks, ParticleSystem* particles, float snowCoverage) {
         const float safeDt = std::min(dt, 0.05f);
 
         for (size_t idx = 0; idx < m_instances.size(); ++idx) {
@@ -560,6 +561,41 @@ namespace AsciiEngine {
             float animSpeedMul = (inst.animState == AnimState::RUN) ? 1.35f : 1.0f;
             inst.animTime += safeDt * animSpeedMul;
             if (inst.animTime > 628.3185f) inst.animTime -= 628.3185f;
+
+            // 4. Emision automatica de pisadas (footsteps) segun el terreno bajo los pies.
+            //    Solo aplica a criaturas terrestres (baseElevationZ <= 0.25) en movimiento.
+            if (particles && tpl.baseElevationZ <= 0.25f &&
+                (inst.animState == AnimState::WALK || inst.animState == AnimState::RUN)) {
+                const float stepInterval = (inst.animState == AnimState::RUN) ? 0.22f : 0.38f;
+                inst.stepTimer += safeDt;
+
+                if (inst.stepTimer >= stepInterval) {
+                    inst.stepTimer -= stepInterval;
+                    const float px = inst.actor.position.x;
+                    const float py = inst.actor.position.y;
+
+                    const SurfaceZone* sz = world.FindSurfaceZoneAt(px, py);
+                    if (sz && sz->walkableOverWater) {
+                        // Sobre puentes de madera o plataformas elevadas: polvo muy sutil.
+                        particles->SpawnBurst("footstep_dust", { px, py, sz->elevationZ + 0.06f }, 2, { 0.16f, 0.16f, 0.04f });
+                    }
+                    else if (world.FindWaterZoneAt(px, py)) {
+                        // Al chapotear en agua: salpicadura visible.
+                        particles->SpawnBurst("footstep_splash", { px, py, 0.14f }, 6, { 0.24f, 0.24f, 0.08f });
+                    }
+                    else if (snowCoverage > 0.35f) {
+                        // Sobre nieve acumulada: nube de escarcha blanca.
+                        particles->SpawnBurst("footstep_snow", { px, py, 0.10f }, 5, { 0.22f, 0.22f, 0.06f });
+                    }
+                    else {
+                        // Suelo natural seco: pequeno rastro de polvo.
+                        particles->SpawnBurst("footstep_dust", { px, py, 0.08f }, 4, { 0.20f, 0.20f, 0.05f });
+                    }
+                }
+            }
+            else {
+                inst.stepTimer = 0.0f;
+            }
         }
     }
 

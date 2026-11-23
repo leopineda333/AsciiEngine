@@ -101,6 +101,16 @@ namespace AsciiEngine {
         float intensity; // Intensidad escalar efectiva del frame.
     };
 
+    /**
+     * @brief Luz puntual efimera con tiempo de vida finito (explosiones, impactos, hechizos).
+     */
+    struct TemporaryLight {
+        PointLight light;
+        float      remainingLife = 0.0f;
+        float      maxLife = 1.0f;
+        bool       fadeOut = true; // true = atenuacion lineal de intensidad y radio al agotarse.
+    };
+
     class LightingSystem {
     public:
         /**
@@ -131,6 +141,14 @@ namespace AsciiEngine {
          */
         void PrepareFrameLights(float minWX, float maxWX, float minWY, float maxWY,
             const PointLight* dynamicTorch = nullptr);
+
+        /**
+         * @brief Anade una luz puntual temporal que se atenua y elimina sola en O(1) al vencer durationSec.
+         */
+        void AddTemporaryLight(Vec3 pos, ColorRGBA color, float intensity, float radius,
+            float durationSec, bool fadeOut = true);
+
+        void ClearTemporaryLights() { m_tempLights.clear(); }
 
         /**
          * @brief Traza un rayo 2D en direccion al Sol/Luna sobre el Heightfield para detectar oclusion.
@@ -187,6 +205,12 @@ namespace AsciiEngine {
         void  SetCycleRunning(bool on) { m_dayNight.enabled = on; }
         void  SetShadowsEnabled(bool on) { m_shadowsEnabled = on; }
 
+        // Ajustes de calidad grafica sincronizados desde EngineSettings (v1.1.0).
+        void SetShadowRaySteps(int steps) { m_shadowRaySteps = (steps < 0) ? 0 : ((steps > 20) ? 20 : steps); }
+        void SetPointLightsEnabled(bool on) { m_pointLightsEnabled = on; }
+        void SetGIStrengthScale(float scale) { m_giStrengthScale = (scale < 0.0f) ? 0.0f : scale; RecomputeSunState(); }
+        void SetAtmosphereInfluence(float infl) { m_atmosphereInfluence = (infl < 0.0f) ? 0.0f : ((infl > 1.0f) ? 1.0f : infl); RecomputeSunState(); }
+
         bool  IsCycleRunning() const { return m_dayNight.enabled; }
         bool  AreShadowsEnabled() const { return m_shadowsEnabled; }
         float GetTimeHours() const { return m_dayNight.currentTimeHours; }
@@ -211,10 +235,11 @@ namespace AsciiEngine {
          */
         float SampleHeightAt(float worldX, float worldY) const;
 
-        DayNightConfig           m_dayNight;
-        GlobalIlluminationConfig m_giConfig;
-        std::vector<PointLight>  m_mapLights;
-        WeatherModifiers         m_weatherMod;
+        DayNightConfig              m_dayNight;
+        GlobalIlluminationConfig    m_giConfig;
+        std::vector<PointLight>     m_mapLights;
+        std::vector<TemporaryLight> m_tempLights;
+        WeatherModifiers            m_weatherMod;
 
         // Lista pre-reservada de luces visibles en el frame actual (cero asignaciones en Render).
         std::vector<ActiveFrameLight> m_activeLights;
@@ -222,6 +247,11 @@ namespace AsciiEngine {
         SunState m_sunState;
         float    m_elapsedTime = 0.0f; // Reloj continuo para parpadeo de luces y animacion de olas.
         bool     m_shadowsEnabled = true;
+
+        int   m_shadowRaySteps = 14;
+        bool  m_pointLightsEnabled = true;
+        float m_giStrengthScale = 1.0f;
+        float m_atmosphereInfluence = 1.0f;
 
         // Mapa de alturas 2D plano (Heightfield) para raymarching de sombras 2.5D.
         float              m_hfOriginX = -140.0f;
